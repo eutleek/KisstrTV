@@ -1,0 +1,1738 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; media-src 'self' data: blob: https: http: local: file:; connect-src 'self' data: blob:; font-src 'self' data:;">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KisstrTV · 随机播放音乐 MV</title>
+<style>
+  :root{
+    --bg:#000; --panel:#141417; --line:#26262b; --line2:#33333a;
+    --tx:#e8e8ea; --dim:#9a9aa2; --dim2:#6a6a72;
+    --accent1:#ffffff; --accent2:#d8dce3; --glow:rgba(255,255,255,.5); --ok:#3ddc84;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:#000; color:var(--tx); overflow:hidden; user-select:none;
+    font-family:"Microsoft YaHei","PingFang SC","Segoe UI",system-ui,sans-serif;
+    font-size:13px;
+  }
+  ::-webkit-scrollbar{width:0;height:0;}
+  button{font-family:inherit; color:inherit; background:none; border:none; cursor:pointer;}
+  input,textarea{font-family:inherit;}
+
+  /* ============ 主播放区（铺满整个无边框窗口） ============ */
+  .main{position:fixed; inset:0; background:#000;}
+  video{position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; background:#000; cursor:pointer; -webkit-app-region:no-drag;}
+  .watermark{
+    position:absolute; top:12px; left:50%; transform:translateX(-50%); z-index:4;
+    color:rgba(255,255,255,.45); font-size:13px; font-style:italic; letter-spacing:1px;
+    text-shadow:0 1px 6px rgba(0,0,0,.6); pointer-events:none; display:none;
+  }
+  .big-empty{
+    position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; padding-bottom:118px; gap:12px;
+    color:var(--dim); background:radial-gradient(700px 380px at 50% 42%, #101016, #020203);
+  }
+  .big-empty button{padding:12px 32px; border-radius:999px; background:rgba(255,255,255,.08); border:none; color:#fff; font-size:14px; letter-spacing:2px;
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); box-shadow:0 6px 24px rgba(0,0,0,.4), 0 0 26px rgba(255,255,255,.18); transition:background .2s, box-shadow .2s;}
+  .big-empty button:hover{background:rgba(255,255,255,.16); box-shadow:0 6px 30px rgba(0,0,0,.5), 0 0 34px rgba(255,255,255,.32);}
+  /* 左下角极简歌曲信息（标题 + 歌手，播放时始终完整显示） */
+  /* 左下歌曲信息：放在窗口左下角（上下毛玻璃栏已取消），不被任何栏遮挡 */
+  .now-hud{position:absolute; left:14px; right:auto; bottom:10px; z-index:30; padding:0; pointer-events:none; text-align:left; transition:opacity .3s; max-width:70%;}
+  .now-hud .t{font-size:14px; font-weight:600; text-shadow:0 1px 8px rgba(0,0,0,.85); line-height:1.35;}
+  .now-hud .s{font-size:11px; color:rgba(255,255,255,.62); margin-top:2px; text-shadow:0 1px 5px rgba(0,0,0,.8); line-height:1.3;}
+
+  /* ============ 幽灵标题栏（无边框感，悬停显示窗口控制；无背景/无毛玻璃栏） ============ */
+  .ghostbar{
+    position:fixed; top:0; left:0; right:0; height:34px; z-index:30;
+    -webkit-app-region:drag; display:flex; align-items:center; justify-content:flex-end; gap:6px; padding:0 3px 0 10px;
+    transition:opacity .25s;
+    background:transparent;
+    opacity:0; pointer-events:none;
+  }
+  .ghostbar .ver{font-size:10px; color:#777; font-family:Consolas,monospace; -webkit-app-region:no-drag; display:none;}
+  .tbtn{-webkit-app-region:no-drag; height:26px; min-width:28px; padding:0 6px; border-radius:6px; display:flex; align-items:center; justify-content:center; gap:4px; color:#aaa; font-size:11px; border:1px solid transparent;}
+  .tbtn:hover{color:#fff; background:rgba(255,255,255,.18); text-shadow:0 1px 3px rgba(0,0,0,.9);}
+  .tbtn.on{color:var(--accent1); border-color:var(--line2);}
+  .tbtn .src-ico{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .winbtns{display:flex; gap:2px; -webkit-app-region:no-drag; padding:0 4px 0 6px; align-items:center;}
+  /* 简洁窗控：无边框、无填充，只有 3 个图符按钮；悬停显示浅底，关闭悬停变红 */
+  .winbtn{width:34px;height:28px; display:flex;align-items:center;justify-content:center; border:none; padding:0; background:transparent;
+    color:#cfd4de; border-radius:6px; transition:background .15s, color .15s;}
+  .winbtn:hover{background:rgba(255,255,255,.12); color:#fff;}
+  .winbtn.close:hover{background:rgba(232,17,35,.85); color:#fff;}
+  .winbtn svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;}
+  .winbtn:active{filter:brightness(.85);}
+
+  /* ============ 频道条：悬浮在播放器正中间，悬停出现/离开消失 ============ */
+  .channels{
+    position:fixed; left:0; right:0; top:50%; transform:translateY(-50%); z-index:20;
+    opacity:0; pointer-events:none; transition:opacity .22s ease; padding:12px 0;
+    background:linear-gradient(90deg, rgba(8,8,12,.32), rgba(14,14,18,.4) 18%, rgba(14,14,18,.4) 82%, rgba(8,8,12,.32));
+    backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+  }
+  .cstrip{display:flex; align-items:center; gap:12px; overflow-x:auto; overflow-y:hidden; padding:8px 22px; cursor:grab;}
+  .cstrip.dragging{cursor:grabbing;}
+  .ch{
+    position:relative; width:74px; height:58px; flex:none; border-radius:11px; overflow:hidden; cursor:pointer;
+    background:transparent; border:none; text-align:center;
+    transition:transform .15s, box-shadow .15s; box-shadow:0 6px 22px rgba(0,0,0,.5);
+  }
+  .ch:hover{transform:translateY(-3px) scale(1.04);}
+  .ch.active{box-shadow:0 0 16px rgba(255,255,255,.25);}
+  .ch .th{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:21px; font-weight:700; color:#fff; letter-spacing:2px; text-shadow:0 2px 12px rgba(0,0,0,.95); background-position:center; background-size:cover;}
+  .ch .th::after{content:''; position:absolute; inset:0; background:linear-gradient(180deg, rgba(0,0,0,.05), rgba(0,0,0,.42)); pointer-events:none;}
+  .ch .th span{position:relative; z-index:1;}
+  .ch .eqmini{position:absolute; top:5px; right:5px; display:none; gap:2px; align-items:flex-end; height:9px;}
+  .ch.active .eqmini{display:flex;}
+  .ch .eqmini i{width:3px;background:var(--accent1);border-radius:2px;height:30%;animation:eq .8s ease-in-out infinite;}
+  .ch .eqmini i:nth-child(2){animation-delay:.12s}
+  .ch .eqmini i:nth-child(3){animation-delay:.24s}
+  @keyframes eq{0%,100%{height:30%}50%{height:100%}}
+  /* 频道条分页：音乐 / 生活（置于频道条正下方居中，不遮卡片） */
+  .channels{position:relative;}
+  .chpage{position:absolute; left:50%; top:100%; transform:translateX(-50%); margin-top:8px; display:flex; flex-direction:row; gap:6px; z-index:3;}
+  .cpp{padding:4px 14px; border-radius:999px; border:none; color:#9a9aa2; font-size:11px; letter-spacing:2px; cursor:pointer;
+    background:rgba(255,255,255,.06); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); transition:background .2s,color .2s,box-shadow .2s;}
+  .cpp:hover{color:#fff; background:rgba(255,255,255,.2);}
+  .cpp.on{color:#fff; background:rgba(255,255,255,.22); box-shadow:0 0 12px rgba(255,255,255,.35);}
+
+  /* ============ 底部控制栏（悬停显示；无背景/无毛玻璃栏） ============ */
+  .statusbar{
+    position:fixed; left:0; right:0; bottom:0; z-index:20; height:60px;
+    display:flex; align-items:center; gap:12px; padding:0 16px;
+    background:transparent;
+    opacity:0; pointer-events:none; transition:opacity .22s ease;
+  }
+  .cbtn{width:32px;height:32px;border-radius:50%; display:flex;align-items:center;justify-content:center;color:#bbb; flex:none;}
+  .cbtn:hover{background:rgba(255,255,255,.2); color:#fff;}
+  .cbtn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .cbtn.power{width:38px;height:38px; background:linear-gradient(135deg,var(--accent1),var(--accent2)); color:#fff; box-shadow:0 0 14px rgba(255,255,255,.4);}
+  .cbtn.power:hover{transform:scale(1.05);}
+  .prog{flex:1; display:flex; align-items:center; gap:10px; min-width:120px;}
+  .time{font-size:11px; color:#9a9aa2; min-width:44px; text-align:center; font-variant-numeric:tabular-nums;}
+  .bar{flex:1; height:4px; border-radius:3px; background:rgba(255,255,255,.18); cursor:pointer; position:relative;}
+  .bar .fill{position:absolute; left:0; top:0; bottom:0; border-radius:3px; background:linear-gradient(90deg,var(--accent1),var(--accent2)); width:0%;}
+  .bar .knob{position:absolute; top:50%; left:0; width:12px;height:12px;border-radius:50%; background:#fff; transform:translate(-50%,-50%); box-shadow:0 0 8px rgba(255,255,255,.5); opacity:0; transition:opacity .15s;}
+  .bar:hover .knob{opacity:1;}
+  .volbtn{display:flex; align-items:center; gap:6px; color:#c9c9cf; padding:5px 10px; border-radius:999px; cursor:pointer; flex:none; margin-left:auto; border:1px solid transparent; transition:background .2s, border-color .2s;}
+  .volbtn:hover{color:#fff; background:rgba(255,255,255,.2); border-color:rgba(255,255,255,.35);}
+  .volbtn svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .volbtn .pv{font-size:10px; color:#9a9aa2;}
+  /* 右下角：画质 + 音量按钮 + 紧凑音量条 */
+  .rightbar{display:flex; align-items:center; gap:8px; margin-left:auto; flex:none;}
+  .qualbtn{display:flex; align-items:center; padding:5px 10px; border-radius:999px; border:none; color:#c9c9cf; font-size:12px; cursor:pointer; flex:none;
+    background:rgba(255,255,255,.07); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); transition:background .2s, color .2s;}
+  .qualbtn:hover{background:rgba(255,255,255,.22); color:#fff;}
+  .qualbtn.on{color:#fff; background:rgba(255,255,255,.18); box-shadow:0 0 14px rgba(255,255,255,.3);}
+  .rightbar input[type=range]{width:74px; -webkit-appearance:none; appearance:none; height:5px; border-radius:3px; background:rgba(180,196,220,.38); outline:none; cursor:pointer; flex:none;}
+  .rightbar input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; width:13px; height:13px; border-radius:50%; background:#e7edf5; box-shadow:0 1px 4px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.5); cursor:pointer;}
+  /* 频道/曲库/历史按钮：无边框，只保留文字 + 磨砂填充 */
+  .radio-pill{display:flex; align-items:center; gap:7px; padding:6px 12px; border-radius:999px; border:none; color:#c9c9cf; font-size:12px; cursor:pointer; flex:none; background:rgba(255,255,255,.07);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); transition:background .2s, box-shadow .2s, color .2s;}
+  .radio-pill:hover{background:rgba(255,255,255,.22); color:#fff;}
+  .radio-pill .eq{display:flex;align-items:flex-end;gap:2px;height:11px;}
+  .radio-pill .eq i{width:3px;border-radius:2px;background:var(--accent1);height:30%;}
+  .radio-pill.on{color:#fff; background:rgba(255,255,255,.18); box-shadow:0 0 18px rgba(255,255,255,.3);}
+  .radio-pill.on .eq i{animation:eq .9s ease-in-out infinite;}
+  .radio-pill.on .eq i:nth-child(2){animation-delay:.15s}
+  .radio-pill.on .eq i:nth-child(3){animation-delay:.3s}
+  .vaultstat{display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:999px; border:none; color:#c9c9cf; font-size:12px; cursor:pointer; flex:none; background:rgba(255,255,255,.07);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); transition:background .2s, color .2s;}
+  .vaultstat:hover{background:rgba(255,255,255,.22); color:#fff;}
+  .vaultstat b{color:#fff; font-variant-numeric:tabular-nums; font-weight:600;}
+  .vaultstat.busy{color:var(--accent1); animation:pulse 1s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+  /* 悬停显隐控制；软件名悬停显示、离开隐藏；左下歌曲信息一直显示 */
+  body.overlay .ghostbar, body.overlay .channels, body.overlay .statusbar{opacity:1; pointer-events:auto;}
+  body.overlay .watermark{display:block;}
+
+  /* ============ 右键菜单 ============ */
+  .ctxmenu{
+    position:fixed; z-index:90; min-width:190px; background:rgba(18,18,24,.78); border:1px solid rgba(255,255,255,.16);
+    border-radius:10px; padding:5px; box-shadow:0 12px 40px rgba(0,0,0,.7); display:none; backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+  }
+  .ctxmenu.show{display:block;}
+  .ctxmenu .mi{display:flex; align-items:center; gap:9px; padding:8px 12px; border-radius:6px; font-size:12.5px; color:var(--tx); cursor:pointer;}
+  .ctxmenu .mi:hover{background:#23232a;}
+  .ctxmenu .mi .ic{width:16px; text-align:center; color:var(--dim); font-size:13px;}
+  .ctxmenu .mi.dim{color:var(--dim);}
+  .ctxmenu .sep{height:1px; background:#26262c; margin:5px 8px;}
+
+  /* ============ Toast / 弹层 ============ */
+  .toasts{position:fixed; top:46px; right:16px; z-index:99; display:flex; flex-direction:column; gap:8px; max-width:360px;}
+  .toast{background:rgba(20,20,26,.72); border:1px solid rgba(255,255,255,.16); border-left:3px solid var(--accent1); border-radius:10px; padding:9px 13px; font-size:12.5px; box-shadow:0 8px 30px rgba(0,0,0,.5); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); animation:tin .25s ease;}
+  .toast.warn{border-left-color:#f0b429;}
+  .toast.err{border-left-color:#e5484d;}
+  .toast.ok{border-left-color:var(--ok);}
+  @keyframes tin{from{opacity:0; transform:translateX(30px)} to{opacity:1; transform:none}}
+  .modal-mask{position:fixed; inset:0; background:rgba(0,0,0,.62); z-index:60; display:none; align-items:center; justify-content:center; backdrop-filter:blur(3px);}
+  .modal-mask.show{display:flex;}
+  .modal{width:660px; max-width:94vw; max-height:86vh; background:rgba(18,18,24,.82); border:1px solid rgba(255,255,255,.16); border-radius:16px; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.6); backdrop-filter:blur(26px); -webkit-backdrop-filter:blur(26px);}
+  .modal-head{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:13px 18px; border-bottom:1px solid #26262c;}
+  .modal-head b{font-size:14px;}
+  .modal-head .vaultchip{font-size:11px; color:var(--dim); background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-radius:999px; padding:3px 10px; flex:none;}
+  .modal-head .vaultchip b{font-size:11px; color:var(--accent1);}
+  .modal-head button{color:var(--dim); font-size:17px; padding:2px 8px;}
+  .modal-body{padding:15px 18px; overflow-y:auto; display:flex; flex-direction:column; gap:12px;}
+  /* 设置/关于卡片 */
+  .aboutcard{display:flex; gap:14px; align-items:flex-start; background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.1); border-radius:12px; padding:14px;}
+  .about-logo{flex:none; width:52px; height:52px; border-radius:13px; display:flex; align-items:center; justify-content:center; overflow:hidden; border:1px solid rgba(255,255,255,.14);}
+  .about-logo img{width:100%; height:100%; object-fit:cover; display:block;}
+  .about-name{font-size:16px; font-weight:700; color:#fff;}
+  .about-tag{font-size:11px; color:#fff; opacity:.9; margin:2px 0 6px;}
+  .about-desc{font-size:12px; color:rgba(255,255,255,.82); line-height:1.75;}
+  .about-lines{font-size:12px; color:rgba(255,255,255,.82); display:flex; flex-direction:column; gap:5px; line-height:1.7;}
+  .about-lines b{color:#fff;}
+  .about-lines a{color:#fff; text-decoration:none;}
+  .about-lines a:hover{text-decoration:underline;}
+  .field label{display:block; font-size:12px; color:var(--dim); margin-bottom:6px;}
+  textarea{width:100%; height:170px; background:#0f0f13; color:var(--tx); border:1px solid #33333c; border-radius:8px; padding:10px; resize:vertical; font-size:12px; line-height:1.7; user-select:text;}
+  textarea:focus{outline:none; border-color:var(--accent1);}
+  input[type=text]{flex:1; background:#0f0f13; border:1px solid #33333c; border-radius:8px; padding:8px 10px; color:var(--tx); font-size:12px; min-width:0;}
+  input[type=text]:focus{outline:none; border-color:var(--accent1);}
+  .chips{display:flex; flex-wrap:wrap; gap:6px;}
+  .chip{padding:5px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.2); color:#c9c9cf; font-size:12px; background:rgba(255,255,255,.05); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);}
+  .chip.active{color:#fff; border-color:rgba(255,255,255,.65); background:rgba(255,255,255,.15);}
+  .rowbtns{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+  .btn{padding:7px 16px; border-radius:10px; font-size:12.5px; border:1px solid rgba(255,255,255,.2); color:#c9c9cf; background:rgba(255,255,255,.05); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); transition:background .2s, border-color .2s, color .2s;}
+  .btn:hover{color:#fff; border-color:rgba(255,255,255,.45); background:rgba(255,255,255,.1);}
+  .btn.primary{background:rgba(255,255,255,.16); color:#fff; border:1px solid rgba(255,255,255,.6); box-shadow:0 4px 18px rgba(255,255,255,.25);}
+  .btn.primary:hover{background:rgba(255,255,255,.28); border-color:rgba(255,255,255,.85);}
+  .btn.red{background:linear-gradient(135deg,#ff3d7f,#ff5c33); color:#fff; border:1px solid rgba(255,255,255,.25); box-shadow:0 4px 18px rgba(255,61,127,.4);}
+  .btn.red:hover{filter:brightness(1.12); box-shadow:0 6px 22px rgba(255,61,127,.55);}
+  .hint{font-size:11px; color:var(--dim2); line-height:1.7;}
+  .hint code{background:#202024; padding:1px 5px; border-radius:4px; color:var(--dim);}
+  .resultlist{display:flex; flex-direction:column; gap:6px; max-height:200px; overflow-y:auto;}
+  .rrow{display:flex;align-items:center;gap:8px;background:#101014;border:1px solid #26262c;border-radius:8px;padding:7px 10px;}
+  .rrow .info{flex:1;min-width:0;}
+  .rrow .info .t{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .rrow .info .a{font-size:10px;color:var(--dim);}
+
+  /* 欢迎层 */
+  .welcome{position:fixed; inset:0; z-index:80; background:rgba(8,8,10,.92); display:none; align-items:center; justify-content:center; backdrop-filter:blur(4px);}
+  .welcome.show{display:flex;}
+  .welcome .card{width:540px; max-width:92vw; background:rgba(18,18,24,.82); border:1px solid rgba(255,255,255,.16); border-radius:18px; padding:28px 32px; text-align:center; backdrop-filter:blur(26px); -webkit-backdrop-filter:blur(26px);}
+  .welcome .logo-big{width:60px;height:60px;margin:0 auto 14px;border-radius:16px;background:linear-gradient(135deg,var(--accent1),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:30px;box-shadow:0 0 28px var(--glow);}
+  .welcome h2{font-size:19px; margin-bottom:6px;}
+  .welcome .sub{color:var(--dim); font-size:12.5px; margin-bottom:16px;}
+  .welcome .features{text-align:left; background:#101014; border:1px solid #26262c; border-radius:10px; padding:13px 17px; font-size:12px; color:var(--dim); line-height:2;}
+  .welcome .features b{color:var(--tx);}
+  .welcome .btn{margin-top:18px; padding:10px 26px; font-size:14px;}
+
+  /* 迷你悬浮（真窗口缩小；关闭按钮与主窗口关闭按钮完全同款：透明无框、灰✕、悬停红；点击区加大到44×32好点中） */
+  /* 迷你悬浮（真窗口缩小；关闭按钮＝苹果风红点，伪元素扩大点击区，悬停显示✕） */
+  /* 迷你悬浮（真窗口缩小；关闭按钮＝与主窗口同风格：无边框无填充、✕ 常显、伪元素扩大点击区、悬停浅底变红） */
+  .mini-close{display:none; position:absolute; top:6px; right:6px; z-index:40; width:30px;height:26px;border-radius:6px;
+    background:transparent; cursor:pointer; -webkit-app-region:no-drag; user-select:none; pointer-events:auto;
+    align-items:center; justify-content:center; border:none; padding:0; color:#cfd4de; transition:background .15s, color .15s;}
+  .mini-close::before{content:''; position:absolute; top:-8px; left:-8px; right:-8px; bottom:-8px;}
+  .mini-close svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;}
+  .mini-close:hover{background:rgba(255,255,255,.14); color:#fff;}
+  .mini-close:active{filter:brightness(.8);}
+  .mini-grip{display:none; position:absolute; top:0; left:0; right:0; height:30px; z-index:10; -webkit-app-region:no-drag;}
+  body.mini .ghostbar, body.mini .channels, body.mini .statusbar, body.mini .now-hud{display:none;}
+  body.mini .main{position:fixed; inset:0; width:100%; height:100%; border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.22); box-shadow:0 16px 50px rgba(0,0,0,.75); z-index:40;}
+  body.mini .mini-close, body.mini .mini-grip{display:flex;}
+  body.mini video{-webkit-app-region:no-drag;}
+</style>
+</head>
+<body>
+
+  <!-- 幽灵标题栏（无边框，悬停顶部显示窗口控制） -->
+  <div class="ghostbar" id="ghostbar">
+    <button class="tbtn" id="btnPin" title="窗口置顶">📌<span>置顶</span></button>
+    <button class="tbtn" id="btnMini" title="迷你悬浮">▣<span>迷你</span></button>
+    <button class="tbtn" id="btnSrc" title="片源管理"><svg class="src-ico" viewBox="0 0 24 24"><path d="M9 17V6l10-2v11"/><circle cx="6.5" cy="17" r="2.5"/><circle cx="16.5" cy="15" r="2.5"/></svg><span>片源</span></button>
+    <button class="tbtn" id="btnSet" title="关于 KisstrTV">⚙<span>设置</span></button>
+    <div class="winbtns">
+      <button class="winbtn" id="btnMin" title="最小化"><svg viewBox="0 0 24 24"><line x1="8" y1="12" x2="16" y2="12"/></svg></button>
+      <button class="winbtn" id="btnMax" title="最大化"><svg viewBox="0 0 24 24"><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/></svg></button>
+      <button class="winbtn close" id="btnClose" title="关闭"><svg viewBox="0 0 24 24"><line x1="8" y1="8" x2="16" y2="16"/><line x1="16" y1="8" x2="8" y2="16"/></svg></button>
+    </div>
+  </div>
+
+  <!-- 频道条：悬浮于播放器正中间，悬停出现 / 离开消失，可左右滑动；分「音乐/生活」两页 -->
+  <div class="channels" id="channels">
+    <div class="cstrip" id="cstrip"></div>
+    <div class="chpage" id="chPage">
+      <button class="cpp on" data-p="0">音乐</button>
+      <button class="cpp" data-p="1">生活</button>
+    </div>
+  </div>
+
+  <!-- 主播放区（铺满窗口） -->
+  <div class="main">
+    <video id="video" playsinline preload="auto"></video>
+    <div class="watermark">KisstrTV</div>
+    <div class="big-empty" id="bigEmpty"></div>
+    <div class="now-hud" id="nowHud">
+      <div class="t" id="nowTitle"></div>
+      <div class="s" id="nowArtist"></div>
+    </div>
+    <button class="mini-close" id="miniClose" title="还原">
+      <svg viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+    </button>
+    <div class="mini-grip" id="miniGrip"></div>
+  </div>
+
+  <!-- 底部状态栏（悬停显示）：右起 历史 / 画质 / 音量条 -->
+  <div class="statusbar" id="statusbar">
+    <div class="rightbar">
+      <button class="vaultstat" id="histBtn" title="播放历史：最近播放过的 MV">
+        历史
+      </button>
+      <button class="qualbtn" id="qualBtn" title="画质：登录后自动更高清，可手动切换">画质·自动</button>
+      <div class="volbtn" id="volBtn" title="音量">
+        <svg viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15 9a4 4 0 0 1 0 6"/></svg>
+      </div>
+      <input type="range" id="volRange" min="0" max="100" step="1" title="音量">
+    </div>
+  </div>
+
+  <!-- 右键菜单（1:1 原版） -->
+  <div class="ctxmenu" id="ctxMenu">
+    <div class="mi" data-act="yinyuetai"><span class="ic">♪</span>音悦台</div>
+    <div class="mi" data-act="yinyuetai_weibo"><span class="ic">📣</span>音悦台官方微博</div>
+    <div class="mi" data-act="airplay"><span class="ic">▶</span>AIRPLAY</div>
+    <div class="mi" data-act="airplay_weibo"><span class="ic">📣</span>AIRPLAY 官方微博</div>
+    <div class="sep"></div>
+    <div class="mi" data-act="pin"><span class="ic">📌</span><span id="ctxPinTxt">始终置顶</span></div>
+    <div class="mi" data-act="random"><span class="ic">🔀</span><span id="ctxRandomTxt">随机电台：开</span></div>
+    <div class="mi" data-act="fav"><span class="ic">♥</span>我的收藏</div>
+    <div class="mi" data-act="sources"><span class="ic">🎵</span>片源管理（B站/网易云）</div>
+    <div class="mi" data-act="mini"><span class="ic">▣</span>迷你悬浮</div>
+    <div class="sep"></div>
+    <div class="mi" data-act="exit"><span class="ic">⏻</span>退出</div>
+  </div>
+
+  <!-- 片源管理 -->
+  <div class="modal-mask" id="srcMask">
+    <div class="modal">
+      <div class="modal-head"><b>片源管理 · 随机播放音乐 MV</b><span class="vaultchip">本地曲库 <b id="vaultNum">0</b> 条</span><button id="srcClose">✕</button></div>
+      <div class="modal-body">
+        <div class="field">
+          <label>选择要编辑的频道（种子列表；播放时会自动从 B站/网易云 抓取该分类全站热门扩充）</label>
+          <div class="chips" id="srcChannels"></div>
+        </div>
+        <div class="field">
+          <label>本频道种子 MV —— 每行一条：<code>标题 | 歌手 | 链接</code>（支持 B站链接/BV号、网易云 MV 链接）</label>
+          <textarea id="srcText" placeholder="例：&#10;晴天 | 周杰伦 | https://www.bilibili.com/video/BV1d4411N7zD&#10;https://music.163.com/#/mv?id=504177&#10;https://example.com/xxx.mp4"></textarea>
+        </div>
+        <div class="rowbtns">
+          <button class="btn primary" id="srcSave">保存到本频道</button>
+          <button class="btn" id="srcImport">从剪贴板导入</button>
+          <button class="btn" id="srcLocal">导入本地视频文件</button>
+          <button class="btn" id="srcClear">清空本频道</button>
+          <button class="btn" id="srcReset">恢复默认片源</button>
+        </div>
+
+        <div class="field" style="border-top:1px solid #26262c; padding-top:12px;">
+          <label>🎵 B 站片源（全站热门扩充主力，建议登录）</label>
+          <div class="rowbtns" style="margin-bottom:8px">
+            <button class="btn red" id="biliLoginBtn">登录B站</button>
+            <button class="btn" id="biliLogoutBtn" style="display:none">退出登录</button>
+            <span id="biliState" style="align-self:center;font-size:12px;color:var(--dim)">B站：检测中…</span>
+          </div>
+          <div class="rowbtns" style="margin-bottom:8px">
+            <input type="text" id="biliSearchInput" placeholder="搜 B 站：动漫OP/ED、歌手MV… 例：红莲华 / 晴天">
+            <button class="btn primary" id="biliSearchBtn" style="flex:none">搜索</button>
+          </div>
+          <div class="resultlist" id="biliResults"></div>
+        </div>
+
+        <div class="field" style="border-top:1px solid #26262c; padding-top:12px;">
+          <label>🎧 网易云音乐片源（MV）—— 需登录后使用</label>
+          <div class="rowbtns" style="margin-bottom:8px">
+            <button class="btn red" id="neteaseLoginBtn">登录网易云</button>
+            <button class="btn" id="neteaseLogoutBtn" style="display:none">退出登录</button>
+            <span id="neteaseState" style="align-self:center;font-size:12px;color:var(--dim)">网易云：检测中…</span>
+          </div>
+          <div class="rowbtns" style="margin-bottom:8px">
+            <input type="text" id="neteaseSearchInput" placeholder="搜网易云 MV：歌手 / 歌名… 例：晴天 / 起风了">
+            <button class="btn primary" id="neteaseSearchBtn" style="flex:none">搜索</button>
+          </div>
+          <div class="resultlist" id="neteaseResults"></div>
+        </div>
+
+        <div class="hint">
+          · <b>全站热门随机</b>：点任意频道后，除内置种子外，会自动按该分类关键词从 B站/网易云 实时抓取热门 MV，随机连播、播完自动换，用于发掘冷门好歌。<br>
+          · <b>原版频道</b>：华语 / 欧美 / 韩流 / 日系 / 新歌 / 怀旧 / 热舞 / 创意 / 剧情 / 性感 / 影视 / 摇滚 / 动漫 / 说唱 / 小清新 / 泛欧西。<br>
+          · <b>B站</b>：未登录时部分搜索会被风控，只能播内置种子；「登录B站」后全站热门抓取更全更稳。<br>
+          · <b>网易云</b>：匿名被风控，需「登录网易云」后才能在热门里混入网易云 MV。<br>
+          · 频道条在播放器正中间，悬停出现、离开消失，可左右拖动滑动。<br>
+          · 所有数据仅存本机，登录信息仅存本机。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 设置 / 关于 -->
+  <div class="modal-mask" id="setMask">
+    <div class="modal" style="width:520px">
+      <div class="modal-head"><b>设置 · 关于 KisstrTV</b><button id="setClose">✕</button></div>
+      <div class="modal-body">
+        <div class="field">
+          <label>应用简介</label>
+          <div class="aboutcard">
+            <div class="about-logo"><img src="assets/icon.png" alt="KisstrTV"></div>
+            <div>
+              <div class="about-name">KisstrTV</div>
+              <div class="about-tag">无边框桌面 MV 电台 · 随机播放音乐 MV</div>
+              <div class="about-desc">全站热门随机连播，覆盖 B站 动漫 / 音乐 MV 与网易云 MV。</div>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label>作者</label>
+          <div class="about-lines">
+            <div><b>官网：</b><a href="https://kisstr.com" target="_blank" rel="noopener noreferrer">kisstr.com</a> · 书影音</div>
+            <div><b>抖音：</b>telescreen</div>
+          </div>
+        </div>
+        <div class="field">
+          <label>免责声明</label>
+          <div class="about-desc" style="line-height:1.8">
+            KisstrTV 是一款个人爱好性质的开源桌面播放器，仅用于个人学习与欣赏音乐 / MV 之目的。
+            · 应用本身不存储、不制作、不缓存任何视频内容，所有片源均来自 Bilibili、网易云音乐等公开平台的网页资源，播放时通过其官方公开接口临时解析；
+            · 本应用与音悦台、Bilibili、网易云音乐及其各自品牌均无任何隶属或授权关系；
+            · 视频版权归原作者 / 权利人所有，请勿将本应用用于任何商业用途或传播侵权内容；
+            · 应用图标素材来源于用户提供的图片，版权归原作者所有；
+            · 登录信息仅保存在您本机，请妥善保管个人账号；任何因使用本应用产生的账号风险、播放失败或内容问题，作者不承担法律责任；
+            · 请遵守您所在地区及平台的服务条款，理性使用，尊重创作者。
+          </div>
+        </div>
+        <div class="rowbtns" style="justify-content:center">
+          <button class="btn primary" id="setDone">知道了</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 播放历史 -->
+  <div class="modal-mask" id="histMask">
+    <div class="modal" style="width:520px">
+      <div class="modal-head"><b>播放历史 · 最近播放</b><button id="histClose">✕</button></div>
+      <div class="modal-body">
+        <div class="resultlist" id="histList" style="max-height:46vh; flex:1;"></div>
+        <div class="rowbtns">
+          <button class="btn" id="histClear">清空历史</button>
+          <span class="hint" style="flex:1">点击任一条即可重新播放；只记录本机，最多保留 100 条。</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 欢迎层 -->
+  <div class="welcome" id="welcome">
+    <div class="card">
+      <div class="logo-big">♫</div>
+      <h2>欢迎回到 KisstrTV</h2>
+      <div class="sub">无边框桌面 MV 电台 · 随机播放音乐 MV（B站 + 网易云全站热门）</div>
+      <div class="features">
+        <b>原版频道</b>：华语 / 欧美 / 韩流 / 日系 / 新歌 / 怀旧 / 热舞 / 创意 / 剧情 / 性感 / 影视 / 摇滚 / 动漫 / 说唱 / 小清新 / 泛欧西 / Vlog / 自然<br>
+        <b>全站热门随机</b>：点频道即从 B站/网易云 实时抓取该分类热门 MV 随机连播，发掘冷门好歌<br>
+        <b>动漫 OP/ED</b>：内置经典合集 + 实时抓取，点「动漫」频道即播<br>
+        <b>原版交互</b>：频道条悬浮正中、悬停出现/离开消失、左右滑动；双击全屏/还原、音量右下角、右键菜单<br>
+        <b>桌面体验</b>：无边框、窗口置顶、迷你悬浮、自动连播
+      </div>
+      <button class="btn primary" id="welcomeGo">开始收听 →</button>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <input type="file" id="fileInput" multiple accept="video/*" style="display:none">
+
+<script>
+/* =====================================================================
+   KisstrTV · 随机播放音乐 MV（原 音悦TV 精神续作，1:1 原版交互）
+   片源：B站（可登录）+ 网易云（可登录）+ 本地 —— 全站热门随机连播
+   ===================================================================== */
+
+function bili(bv, t, a){ return {t:t, a:a, u:'https://www.bilibili.com/video/'+bv, k:'bili', bv:bv}; }
+function ne(mid, t, a){ return {t:t, a:a, u:'https://music.163.com/#/mv?id='+mid, k:'netease', mid:String(mid)}; }
+
+/* ---------- 频道搜索关键词（全站热门抓取用） ---------- */
+var CHANNEL_KEYWORDS = {
+  c_huayu:      ['华语MV','华语金曲MV','华语热门MV','华语经典MV'],
+  c_oumei:      ['欧美MV','欧美流行MV','欧美金曲MV','英文MV'],
+  c_hanliu:     ['韩流MV','K-POP MV','韩国MV','韩团MV'],
+  c_rixi:       ['日系MV','J-POP MV','日本MV','日音MV'],
+  c_xinge:      ['新歌MV','热门新歌MV','新歌推荐MV','近期热歌MV'],
+  c_huaijiu:    ['经典老歌MV','怀旧金曲MV','8090年代金曲','经典MV'],
+  c_rewu:       ['舞蹈MV','热舞MV','动感舞曲MV','宅舞MV'],
+  c_chuangyi:   ['创意MV','概念MV','视觉MV','独特MV'],
+  c_juqing:     ['剧情MV','微电影MV','故事MV','剧情向MV'],
+  c_xinggan:    ['唯美MV','浪漫MV','氛围MV','抒情MV'],
+  c_yingshi:    ['影视MV','OST MV','主题曲MV','影视原声'],
+  c_yaogun:     ['摇滚MV','摇滚乐队MV','金属MV','摇滚现场'],
+  c_dongman:    ['动漫OP','动漫ED','动漫MV','热血动漫曲','动漫歌曲','少女漫OP','少女向动漫歌曲','经典动漫OP','唯美动漫OP','恋爱动漫OP','人形电脑天使心','魔卡少女樱','美少女战士','水果篮子','樱兰高校男公关部','夏目友人帐','犬夜叉','会长是女仆大人','龙与虎','好想告诉你'],
+  c_shuochang:  ['说唱MV','RAP MV','嘻哈MV','说唱歌曲'],
+  c_vlog:       ['Vlog','vlog 热门','旅行vlog','生活vlog','日常vlog','城市漫步vlog','治愈系vlog','高播放vlog'],
+  c_ziran:      ['动物世界','人与自然','野生动物','动物剪辑','动物纪录片','可爱动物','猫科动物','海洋生物','大熊猫','猛兽'],
+  c_zhaowu:     ['宅舞','宅舞MV','宅舞翻跳','舞见','元气宅舞','极乐净土','二次元宅舞','宅舞合集'],
+  c_wudao:      ['舞蹈MV','舞蹈翻跳','K-POP舞蹈','街舞','现代舞','中国舞','舞蹈区热门','练习室'],
+  c_asmr:       ['ASMR','ASMR助眠','雨声','白噪音','助眠','深度睡眠','治愈ASMR','耳搔'],
+  c_xiaoqingxin:['民谣MV','小清新MV','独立音乐MV','治愈系MV'],
+  c_fanouxi:    ['欧美MV','欧美流行MV','格莱美MV','英文金曲'],
+  c_lofi:       ['lofi','Lofi hip hop','lofi 合集','chill beats','专注音乐','lofi 电台'],
+  c_synth:      ['合成器','Synthwave','电子乐MV','电音MV','Retro synth','synthwave 合集','Vaporwave']
+};
+
+/* ---------- 默认频道种子（原版风格频道；播放时自动抓取全站热门扩充） ---------- */
+var DEFAULT_CHANNELS = [
+  { id:'c_huayu', name:'华语', desc:'B站华语MV 全站热门',
+    items:[
+      bili('BV1d4411N7zD','晴天','周杰伦 · 4K修复MV'),
+      bili('BV1ws411Y7wi','光年之外','邓紫棋 · 1080P MV'),
+      bili('BV1f59QBGEhx','大鱼','周深 · 4K MV'),
+      bili('BV1pNikB2Eum','七里香','周杰伦 · 官方MV'),
+      bili('BV1s1jU69EAy','江南','林俊杰 · 4K修复MV'),
+      bili('BV11z421h7u7','倔强','五月天 · 官方MV'),
+      bili('BV1x7411t7h2','浮夸','陈奕迅 · 4K修复MV')
+    ] },
+  { id:'c_oumei', name:'欧美', desc:'欧美流行 MV 全站热门',
+    items:[
+      bili('BV1qU4y1F73A','See You Again','Charlie Puth · 4K MV'),
+      bili('BV1u541147LT','Perfect','Ed Sheeran · 官方MV'),
+      bili('BV1CDZWBUEPv','Despacito','Luis Fonsi · 4K MV')
+    ] },
+  { id:'c_hanliu', name:'韩流', desc:'K-Pop MV 全站热门',
+    items:[
+      bili('BV11u4y117bw','Gee','少女时代 · MV'),
+      bili('BV16Wy3BrE3G','春日 Spring Day','BTS 防弹少年团 · 4K'),
+      bili('BV1Vx411275m','春日 (1080P)','BTS · 高清'),
+      bili('BV1FcNP6oEN6','DDU-DU DDU-DU','BLACKPINK · 4K修复')
+    ] },
+  { id:'c_rixi', name:'日系', desc:'J-Pop MV 全站热门',
+    items:[
+      bili('BV1rfZjBFEYW','Lemon','米津玄师 · 4K MV'),
+      bili('BV1Lf4y1v7PM','打上花火','米津玄师 × DAOKO · 1080P'),
+      bili('BV1UD4y1y7UD','残響散歌','Aimer · 鬼灭之刃'),
+      bili('BV1EzubzQEGD','千本樱','初音未来 · 2025高清重制')
+    ] },
+  { id:'c_dongman', name:'动漫', desc:'动漫 OP/ED 全站热门（重点）',
+    items:[
+      bili('BV1Gr4nzFEAM','红莲华','LiSA · 鬼灭之刃OP'),
+      bili('BV1a6shzXEjb','青鸟','生物股长 · 火影忍者OP3'),
+      bili('BV1kfyaBMEsG','廻廻奇譚','Eve · 咒术回战OP'),
+      bili('BV1ea4y1y7gb','残酷天使的行动纲领','高桥洋子 · EVA OP'),
+      bili('BV1Ns411q7U3','Butter-Fly','和田光司 · 数码宝贝OP'),
+      bili('BV1BpY5zzEnH','好想大声说爱你','BAAD · 灌篮高手OP'),
+      bili('BV118411W7sv','KICK BACK','米津玄师 · 电锯人OP'),
+      bili('BV1YLEp6KE6Q','アイドル（偶像）','YOASOBI · 我推的孩子OP'),
+      bili('BV1uF411U7Ts','勇者','YOASOBI · 葬送的芙莉莲OP'),
+      bili('BV1skmfYKErt','青春コンプレックス','结束乐队 · 孤独摇滚OP'),
+      bili('BV1gr4y1c7xs','自由之翼','Linked Horizon · 进击的巨人OP2'),
+      bili('BV1UD4y1y7UD','残響散歌','Aimer · 鬼灭之刃游郭篇OP'),
+      bili('BV1M14y1T7nr','Change the World','V6 · 犬夜叉OP'),
+      bili('BV1MA4y1R7LZ','ミックスナッツ','Official髭男dism · 间谍过家家OP'),
+      bili('BV1Fs411j7Ch','CHA-LA HEAD-CHA-LA','影山浩宣 · 龙珠Z OP'),
+      bili('BV1JC4y1w7RQ','ウィーアー!','北谷洋 · 海贼王OP'),
+      bili('BV1Eb4y1d7hD','コネクト','ClariS · 魔法少女小圆OP'),
+      bili('BV1Vh6LYuEwn','カワキヲアメク','美波 · 家有女友OP'),
+      bili('BV1Jr4y1974R','渋谷事変 NCED','咒术回战 第二季 ED'),
+      bili('BV1cwVG6qE3f','secret base','未闻花名 ED'),
+      bili('BV1nCLbz6Egc','オレンジ','7!! · 四月是你的谎言 ED2'),
+      bili('BV1a54y1r7jc','LOST IN PARADISE','ALI · 咒术回战 ED'),
+      bili('BV1rZ9fY2EbB','团子大家族','茶太 · CLANNAD ED'),
+      bili('BV1Heu9zwEXY','团子大家族（4K）','茶太 · CLANNAD ED'),
+      bili('BV1x4411u7ot','中华一番 OP&ED 分P合集（13首）','分P收藏向 · 中华小当家'),
+      bili('BV12djF6XE3Q','彻夜之歌 OP&ED 分P合集（5首）','两季中日歌词字幕'),
+      bili('BV1zTkRBsEq5','鬼灭之刃 全部主题曲播放列表','燃烧心灵的瞬间'),
+      bili('BV1ZaHWzNEUW','火影忍者 OP 合集','片头跳过的一分半，是我们回不去的青春'),
+      bili('BV1HsLz6WETS','1998年 TV动画 OP-ED 大合集（3小时）','当年TV动画曲库'),
+      bili('BV1cRYWzzECx','1995年 TV动画 OP-ED 合集','当年TV动画曲库'),
+      bili('BV1GoTXz6Es4','鬼灭之刃 历代主题曲合集','立志篇~柱稽古篇'),
+      bili('BV1ZeSfYtE3U','人形电脑天使心 OP Let Me Be With You','Chobits · 4K修复'),
+      bili('BV1RQ4y1K7m2','人型电脑天使心 OP（1080P分P）','Chobits · 经典少女漫'),
+      bili('BV1bCK1zGEnU','Let Me Be With You','ROUND TABLE · 人形电脑天使心'),
+      bili('BV1CPNczTESh','魔卡少女樱 OP 扉をあけて','百变小樱 · 1080P'),
+      bili('BV13Xnoe4ERq','魔卡少女樱 OP2 扉をあけて（4K UHD分P）','初代萌王 木之本樱'),
+      bili('BV1Gw411578g','魔卡少女樱 主题曲 扉をあけて','封印解除'),
+      bili('BV1CBTu6XEr3','夏目友人帐 第五季 NCOP タカラバコ','4K/60fps/Hi-Res'),
+      bili('BV1KwXNYaEQU','犬夜叉 最全音乐合集27首','回味经典 · 长篇合集')
+    ] },
+  { id:'c_zhaowu', name:'宅舞', desc:'宅舞 / 翻跳 全站热门',
+    items:[
+      bili('BV1us41137Fd','极乐净土 本家','GARNiDELiA · 神曲原跳'),
+      bili('BV1AEUSBNEXF','极乐净土 舞蹈纯享版','常驻舞蹈区十年'),
+      bili('BV1Js421K71K','夜·洋·蛋 极乐净土','八周年&一亿播放贺'),
+      bili('BV1jNLp6AEhu','极乐净土 · 穿上十年前的衣服','十年纪念 190万播放'),
+      bili('BV1Qa99BBEQo','漫展人群前跳极乐净土','胡桃COS'),
+      bili('BV1SF9vBmE3Q','十年前的方式拍摄 极乐净土','十年老舞见纪念作')
+    ] },
+  { id:'c_wudao', name:'舞蹈', desc:'舞蹈区 / K-Pop翻跳 / 街舞 全站热门',
+    items:[
+      bili('BV1chcrzTEEx','No.9 翻跳 竖屏直拍','这谁顶得住'),
+      bili('BV1ts8i6oE36','Old School 翻跳','X-90dB 聋人街舞团'),
+      bili('BV1jdLB6VE6v','26年了又被这支舞帅到','joe编舞 hiphop'),
+      bili('BV1xCf8BrErA','花月成双 BDF2021 翻跳','古风 · 草丛')
+    ] },
+  { id:'c_asmr', name:'ASMR', desc:'ASMR 助眠 / 雨声 / 白噪音',
+    items:[
+      bili('BV1osE968EDC','下雨天的声音（10小时）','Heavy Rain 助眠'),
+      bili('BV1hMAJz8E7W','8小时超长雨声 · 屋檐下','白噪音一夜好眠'),
+      bili('BV1jUDSBhEdQ','1小时极致雨声 · 窗外大雨','深度睡眠助眠'),
+      bili('BV1eQwQz4EEs','8小时 雨声+烧柴声','深度睡眠无雷声'),
+      bili('BV1RYMW6jEze','耳边轻声聊天×耳勺清理','99.9%会困'),
+      bili('BV1h2o5BqE22','绿叶暴雨声 8小时','极致纯净雨滴白噪音'),
+      bili('BV1BgM46fE8D','铁皮屋顶的雷雨声 10小时','真实录制'),
+      bili('BV1XcR1BDEwa','一帘雨声 3D环绕 30min','4K 深度睡眠')
+    ] },
+  { id:'c_xinge', name:'新歌', desc:'热门新歌 全站热门',
+    items:[
+      bili('BV1ue3Qz3EJy','起风了 (4K60)','买辣椒也用券'),
+      bili('BV1GLdBYkEau','起风了 (Hi-Res)','买辣椒也用券'),
+      bili('BV17t411b777','起风了（原版）','买辣椒也用券'),
+      bili('BV1W2gFz7Ebr','千本樱 2025新版','初音未来')
+    ] },
+  { id:'c_huaijiu', name:'怀旧', desc:'经典老歌 全站热门',
+    items:[
+      bili('BV1Nu411o7hK','朋友','周华健 · 1080P MV'),
+      bili('BV1d4411N7zD','晴天','周杰伦 · 4K修复MV'),
+      bili('BV1pNikB2Eum','七里香','周杰伦 · 官方MV'),
+      bili('BV1vsKE68ENM','海阔天空','Beyond · 1080P修复'),
+      bili('BV11u4y117bw','Gee','少女时代 · 2009 经典')
+    ] },
+  { id:'c_rewu', name:'热舞', desc:'动感舞曲 MV 全站热门',
+    items:[
+      bili('BV1rvmKBzEmx','极乐净土','GARNiDELiA · 4K官方MV'),
+      bili('BV1zC41157L4','极乐净土 (4K60)','GARNiDELiA · 修复'),
+      bili('BV1424y1K7A6','极乐净土（高清）','MARiA · 中日字幕'),
+      bili('BV11u4y117bw','Gee','少女时代 · 舞蹈MV'),
+      bili('BV1FcNP6oEN6','DDU-DU DDU-DU','BLACKPINK · 4K')
+    ] },
+  { id:'c_chuangyi', name:'创意', desc:'创意 / 概念 MV 全站热门',
+    items:[
+      bili('BV1ws411Y7wi','光年之外','邓紫棋 · 概念MV'),
+      bili('BV1ue3Qz3EJy','起风了','买辣椒也用券 · 创意MV'),
+      bili('BV1f59QBGEhx','大鱼','周深 · 动画概念'),
+      bili('BV1EzubzQEGD','千本樱','初音未来 · 视觉系MV')
+    ] },
+  { id:'c_juqing', name:'剧情', desc:'剧情向 MV 全站热门',
+    items:[
+      bili('BV1d4411N7zD','晴天','周杰伦 · 春夏秋冬剧情MV'),
+      bili('BV1x7411t7h2','浮夸','陈奕迅 · 剧情MV'),
+      bili('BV1ws411Y7wi','光年之外','邓紫棋 · 科幻剧情')
+    ] },
+  { id:'c_xinggan', name:'性感', desc:'唯美 / 氛围 MV（健康精选）',
+    items:[
+      bili('BV1u541147LT','Perfect','Ed Sheeran · 浪漫'),
+      bili('BV1ws411Y7wi','光年之外','邓紫棋 · 氛围'),
+      bili('BV1s1jU69EAy','江南','林俊杰 · 唯美')
+    ] },
+  { id:'c_yingshi', name:'影视', desc:'影视原声 / OST MV 全站热门',
+    items:[
+      bili('BV1q84y1g768','凉凉','杨宗纬 × 张碧晨 · 三生三世'),
+      bili('BV1h6D6YvE82','凉凉 (4K)','三生三世 OST'),
+      bili('BV1r34y1Z7GC','仙剑问情','萧人凤 · 仙剑奇侠传'),
+      bili('BV1YW411c7bz','仙剑问情 (3D动画MV)','萧人凤'),
+      bili('BV1f59QBGEhx','大鱼','周深 · 大鱼海棠')
+    ] },
+  { id:'c_yaogun', name:'摇滚', desc:'摇滚 全站热门',
+    items:[
+      bili('BV1QHJyzyEab','海阔天空 (4K60)','Beyond'),
+      bili('BV1vsKE68ENM','海阔天空 (1080P)','Beyond'),
+      bili('BV1HM411d7un','海阔天空（高清修复）','Beyond'),
+      bili('BV14h4y1u7Mw','怒放的生命 (4K)','汪峰'),
+      bili('BV1bZaUzSE6V','怒放的生命 (DVD)','汪峰'),
+      bili('BV1Kx411x7Nn','怒放的生命','汪峰')
+    ] },
+
+  { id:'c_shuochang', name:'说唱', desc:'Rap / 嘻哈 全站热门',
+    items:[
+      bili('BV12Z4y1g79b','飘向北方','尤长靖 × 那吾克热'),
+      bili('BV1k9xYz1E2Q','飘向北方（王力宏原版）','王力宏'),
+      bili('BV15L411H7Dm','野狼Disco','宝石Gem · HD MV'),
+      bili('BV1PX59zmEBs','野狼Disco (4K)','宝石Gem'),
+      bili('BV1ui4y1j7BB','野狼Disco（1080P）','宝石Gem')
+    ] },
+  { id:'c_xiaoqingxin', name:'小清新', desc:'民谣 / 清新 全站热门',
+    items:[
+      bili('BV1si4y187fJ','成都（蓝光）','赵雷'),
+      bili('BV11W411B7gi','成都（正式MV）','赵雷 · 高圆圆出演'),
+      bili('BV1AV4y1S7fN','成都（官方1080P）','赵雷'),
+      bili('BV1EjgVzLErF','南山南 (4K)','马頔'),
+      bili('BV1WT41117ug','南山南 (4K60)','马頔'),
+      bili('BV15H4y1p7u2','南山南（4K珍藏）','马頔')
+    ] },
+  { id:'c_fanouxi', name:'泛欧西', desc:'欧美 / 拉美等泛西方 全站热门',
+    items:[
+      bili('BV1CDZWBUEPv','Despacito (4K)','Luis Fonsi & Daddy Yankee'),
+      bili('BV11c411Q7As','Despacito (4K120)','Luis Fonsi'),
+      bili('BV1wx411u7gV','Despacito (60帧双语)','Luis Fonsi')
+    ] },
+  { id:'c_vlog', name:'Vlog', desc:'播放量高的 Vlog 精选',
+    items:[
+      bili('BV1Mabe6nEQM','日本Vlog 独自旅行7天6夜','环球影城/奈良喂鹿/京都'),
+      bili('BV1XhdeBsE9d','印尼VLOG 火山之旅','布罗莫火山+巴厘岛'),
+      bili('BV12J7Y6JEsq','10天不间断超长vlog','6个城市来回穿梭'),
+      bili('BV1Cegx63Eyv','欧洲vlog 再见巴黎','高定周旅行'),
+      bili('BV1868A6qEk7','中日情侣vlog 西江千户苗寨','贵州黔东南之旅'),
+      bili('BV1PYj96MEXQ','给我在互联网上最喜欢的人','旅行合集精选')
+    ] },
+  { id:'c_ziran', name:'自然', desc:'播放量高的动物/自然剪辑（像《人与自然》）',
+    items:[
+      bili('BV1WdwRznEch','非洲最致命竞技场（完整纪录片）','野蛮王国 · 塞伦盖蒂'),
+      bili('BV1Mk2YBdEHL','角马横渡生死之河','鳄鱼年度大餐'),
+      bili('BV1fbFYzrE3h','野蛮王国：逃离生存的考验','虎鲸/猎豹/鳄鱼/灰狼'),
+      bili('BV1GmtgzuEuZ','莫里斯狼群围猎野牛','黄石公园'),
+      bili('BV1sY8MzZEv3','大白鲨突袭？海狗军团集体反击','地球脉动素材'),
+      bili('BV1oNiiBHEte','秘境亚马逊：与风暴共生的野性生命','纪录片级画质'),
+      bili('BV1FA86zBECC','野性峡谷','埃塞俄比亚高原'),
+      bili('BV1ZGYbzkENg','逆流的银潮：鲑鱼的归家之路','鲑鱼迁徙/灰熊捕食')
+    ] },
+  { id:'c_lofi', name:'Lofi', desc:'Lofi / 慵懒节奏 / 治愈 beats 全站热门',
+    items:[
+      bili('BV1N14y1W78y','lofi hip hop radio','beats to relax/study to'),
+      bili('BV1Zs411A717','2小时静心学习 Lofi','陪你学习背景音乐'),
+      bili('BV1s9pMe7E61','1小时 lofi hip hop radio','适合放松和入睡'),
+      bili('BV1884y137AZ','ADHD 7小时超长专注','集中注意力 Lofi')
+    ] },
+  { id:'c_synth', name:'合成器', desc:'合成器 / Synthwave / 电子乐 MV 全站热门',
+    items:[
+      bili('BV1s7SmY6Eem','城市夜行 精选10首Synthwave','PLAYLIST'),
+      bili('BV1xk4265E2Q','深夜必听 SynthWave 第一集','合成器浪潮音乐分享'),
+      bili('BV1eT411R7pq','Neon Nox · Twisted Getaway','Synthwave 电子'),
+      bili('BV1Z8yZYCEw7','Stay With Me 复古合成器','电子乐 · 海边夏日')
+    ] },
+  { id:'fav', name:'我的收藏', desc:'你收藏的 MV', items:[] }
+];
+
+var LS_KEY = 'yytv.radio.channels.v3';
+var LS_VOL = 'yytv.radio.vol';
+var LS_FIRST = 'yytv.radio.first';
+
+var channels = loadChannels();
+var state = {
+  curChannel: null,
+  queue: [],       // 候选池（内置种子 + 全站热门抓取）
+  qi: -1,
+  played: {},      // 已播放去重（按 item.u）
+  playing: false,
+  random: true,    // 随机电台：播完自动换频道（跨频道全站热门）
+  vol: 0.8, volSteps: [0.5, 0.8, 1.0]
+};
+
+/* ---------- 基础工具 ---------- */
+function $(id){ return document.getElementById(id); }
+/* 右上角提示：v13 起全部静默（不再打扰），如需排查可看控制台 */
+function toast(msg, type){ try{ console.debug('[KisstrTV]', type||'', msg); }catch(e){} }
+function fmt(sec){
+  if(!isFinite(sec)||sec<0) sec=0;
+  var m = Math.floor(sec/60), s = Math.floor(sec%60);
+  return (m<10?'0':'')+m+':'+(s<10?'0':'')+s;
+}
+function shuffle(a){
+  for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; }
+  return a;
+}
+function gradientOf(str){
+  var h=0; for(var i=0;i<str.length;i++) h=(h*31+str.charCodeAt(i))>>>0;
+  var p1=h%360, p2=(p1+40)%360;
+  return 'linear-gradient(150deg, hsl('+p1+',38%,26%), hsl('+p2+',36%,15%))';
+}
+function firstChar(t){ return (t||'♪').trim().charAt(0).toUpperCase(); }
+function pickRandomChannel(){
+  // 随机电台只播「音乐页」的频道（生活页的宅舞/舞蹈/ASMR/Vlog/自然不参与随机电台，保持电台的 MV 调性）
+  var pool = channels.filter(function(c){ return c.id!=='fav' && c.items.length && (CH_PAGE2[c.id]||0)===0; });
+  if(!pool.length) return null;
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+/* ---------- 频道持久化（v3；v2/v1 自动迁移收藏；新频道自动并入） ---------- */
+function loadChannels(){
+  var def = JSON.parse(JSON.stringify(DEFAULT_CHANNELS));
+  try{
+    var raw = localStorage.getItem(LS_KEY);
+    if(raw){
+      var arr = JSON.parse(raw);
+      if(Array.isArray(arr) && arr.length){
+        // 新版本新增的频道（宅舞/舞蹈/ASMR/Vlog/自然…）按默认顺序插回对应位置，老用户也能看到
+        def.forEach(function(nc, i){
+          if(!arr.some(function(c){ return c.id===nc.id; })) arr.splice(Math.min(i, arr.length), 0, nc);
+        });
+        return arr;
+      }
+    }
+  }catch(e){}
+  ['yytv.radio.channels.v2','yytv.radio.channels.v1'].forEach(function(k){
+    try{
+      var old = localStorage.getItem(k);
+      if(!old) return;
+      var oarr = JSON.parse(old);
+      if(Array.isArray(oarr)){
+        var oldFav = oarr.find(function(c){return c.id==='fav';});
+        if(oldFav && oldFav.items && oldFav.items.length){
+          var fc = def.find(function(c){return c.id==='fav';});
+          fc.items = oldFav.items;
+        }
+      }
+    }catch(e){}
+  });
+  return def;
+}
+function saveChannels(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(channels)); }catch(e){} }
+function favChannel(){ return channels.find(function(c){return c.id==='fav';}) || (channels.push({id:'fav',name:'我的收藏',desc:'',items:[]}), channels[channels.length-1]); }
+
+/* ---------- 频道条渲染（悬浮正中，透明图片卡片+两字） ---------- */
+var SHORT = {c_huayu:'华语',c_oumei:'欧美',c_hanliu:'韩流',c_rixi:'日系',c_zhaowu:'宅舞',c_wudao:'舞蹈',c_asmr:'ASMR',c_xinge:'新歌',c_huaijiu:'怀旧',c_rewu:'热舞',c_chuangyi:'创意',c_juqing:'剧情',c_xinggan:'性感',c_yingshi:'影视',c_yaogun:'摇滚',c_dongman:'动漫',c_shuochang:'说唱',c_xiaoqingxin:'小清',c_fanouxi:'泛欧',c_lofi:'Lofi',c_synth:'合成',c_vlog:'Vlog',c_ziran:'自然',fav:'收藏'};
+var coverCache = {};   // channel id -> 封面图URL（取该频道第一个种子的B站封面）
+var COVER_LS = 'yytv.covers';   // 封面本地缓存：第二次启动秒出封面，不再等网络
+function coverLoad(){ try{ var o=JSON.parse(localStorage.getItem(COVER_LS)||'{}'); for(var k in o){ if(!coverCache[k]) coverCache[k]=o[k]; } }catch(e){} }
+function coverSave(){ try{ localStorage.setItem(COVER_LS, JSON.stringify(coverCache)); }catch(e){} }
+coverLoad();
+/* 频道分页：0=音乐页（默认），1=生活页（宅舞/舞蹈/ASMR/Vlog/自然等非音乐内容） */
+var CH_PAGE2 = {c_zhaowu:1, c_wudao:1, c_asmr:1, c_vlog:1, c_ziran:1};
+var chPage = 0;
+function shortName(c){ return SHORT[c.id] || (c.name||'××').slice(0,2); }
+function renderChannels(){
+  var strip = $('cstrip'); strip.innerHTML = '';
+  var vis = channels.filter(function(c){ return c.id!=='fav' && (CH_PAGE2[c.id]||0)===chPage; });   // 不显示收藏卡片
+  vis.forEach(function(c){
+    var el = document.createElement('button');
+    el.className = 'ch' + (state.curChannel && state.curChannel.id===c.id ? ' active':'');
+    el.id = 'ch-'+c.id;
+    var th = document.createElement('div'); th.className = 'th';
+    if(coverCache[c.id]) th.style.backgroundImage = "url('"+coverCache[c.id]+"')";
+    else th.style.background = gradientOf(c.name || 'x');
+    th.innerHTML = '<span>'+shortName(c)+'</span>';
+    el.appendChild(th);
+    var eq = document.createElement('div'); eq.className = 'eqmini'; eq.innerHTML = '<i></i><i></i><i></i>';
+    el.appendChild(eq);
+    el.onclick = function(){
+      if(_chMoved){ _chMoved = false; return; }   // 拖拽滑动后不触发选中，单点才选中
+      feedChannel(c.id, false);
+    };
+    strip.appendChild(el);
+  });
+  loadChannelCovers();
+}
+/* 频道分页切换（音乐 / 生活） */
+(function(){
+  var tabs = $('chPage').querySelectorAll('.cpp');
+  function activate(){
+    tabs.forEach(function(b){ b.classList.toggle('on', Number(b.dataset.p)===chPage); });
+  }
+  tabs.forEach(function(b){
+    b.onclick = function(){
+      chPage = Number(b.dataset.p);
+      try{ localStorage.setItem('yytv.chpage', String(chPage)); }catch(e){}
+      activate(); renderChannels();
+    };
+  });
+  try{ var saved = parseInt(localStorage.getItem('yytv.chpage'),10); if(saved===1){ chPage=1; } }catch(e){}
+  activate();
+})();
+/* 用每个频道第一个种子的 B 站封面填充卡片（异步，并行拉取；本地缓存 + 缺失项即时补拉，速度更快） */
+function loadChannelCovers(){
+  if(!window.audioAPI || !window.audioAPI.biliView) return;
+  // 1) 已缓存（含本地缓存）的封面先补到当前 DOM，秒出
+  channels.forEach(function(c){
+    var th = document.querySelector('#ch-'+c.id+' .th');
+    if(th && coverCache[c.id]) th.style.backgroundImage = "url('"+coverCache[c.id]+"')";
+  });
+  // 2) 并行拉取未缓存的封面（失败则稍后重试一次）
+  channels.forEach(function(c){
+    if(coverCache[c.id]) return;
+    var seed = c.items.find(function(it){ return bvidOf(it); });
+    if(!seed) return;
+    window.audioAPI.biliView(bvidOf(seed)).then(function(r){
+      if(r && r.ok && r.pic){
+        coverCache[c.id] = r.pic; coverSave();
+        var th = document.querySelector('#ch-'+c.id+' .th');
+        if(th) th.style.backgroundImage = "url('"+r.pic+"')";
+      } else {
+        setTimeout(function(){ if(!coverCache[c.id]) loadChannelCovers(); }, 2000);
+      }
+    }).catch(function(){ setTimeout(function(){ if(!coverCache[c.id]) loadChannelCovers(); }, 2000); });
+  });
+}
+
+/* ---------- 频道条左右滑动（拖拽 + 滚轮，流畅；拖拽不选中、单点才选中） ---------- */
+var _chMoved = false;
+(function(){
+  var strip = $('cstrip'), down=false, startX=0, startY=0, startL=0;
+  strip.addEventListener('mousedown', function(e){
+    down = true; startX = e.clientX; startY = e.clientY; startL = strip.scrollLeft; _chMoved = false;
+    strip.classList.add('dragging');
+  });
+  window.addEventListener('mousemove', function(e){
+    if(!down) return;
+    if(Math.abs(e.clientX - startX) > 4 || Math.abs(e.clientY - startY) > 4) _chMoved = true;
+    strip.scrollLeft = startL - (e.clientX - startX);
+  });
+  window.addEventListener('mouseup', function(){ down=false; strip.classList.remove('dragging'); });
+  strip.addEventListener('wheel', function(e){
+    e.preventDefault();
+    strip.scrollLeft += (e.deltaY || e.deltaX);
+  }, {passive:false});
+})();
+
+/* ---------- 悬停显隐（频道条/控制栏：悬停出现、离开消失） ---------- */
+var uiTimer = null;
+function showChrome(){ document.body.classList.add('overlay'); }
+function hideChrome(){ document.body.classList.remove('overlay'); }
+function restartIdle(){
+  showChrome();
+  if(uiTimer) clearTimeout(uiTimer);
+  uiTimer = setTimeout(hideChrome, 4000);
+}
+function syncChrome(){
+  if(state.playing) restartIdle();
+  else showChrome();
+}
+document.addEventListener('mousemove', function(){ if(state.playing) restartIdle(); else showChrome(); });
+document.addEventListener('mouseleave', function(){ hideChrome(); });
+
+/* ---------- 全站热门随机：选择频道 = 种子 + 实时抓取该分类热门 ---------- */
+function feedChannel(id, fromRadio){
+  var c = channels.find(function(x){return x.id===id;}); if(!c) return;
+  if(!c.items.length && id!=='fav'){ toast('「'+c.name+'」暂无种子，将从全站实时抓取','warn'); }
+  state.curChannel = c;
+  state.played = {};
+  state.queue = c.items.slice();
+  shuffle(state.queue);
+  state.qi = -1;
+  if(!fromRadio) { state.random = false; updateRadio(); }
+  renderChannels();
+  syncChrome();
+  preExpandSeeds(c);  // 主动把「合集/分P」种子拆成单曲
+  expandFeed(c);      // 异步：曲库拉取+挖掘 + 官方热门导入
+  advance();          // 立即播放
+}
+function feedRandomChannel(){
+  var c = pickRandomChannel(); if(!c){ bigEmpty(); return; }
+  state.random = true; updateRadio();
+  feedChannel(c.id, true);
+}
+function expandFeed(c){
+  if(!c || !c.id) return;
+  ensureVault(c);   // 曲库：拉取本主题 + 相关视频链挖掘 + 站内热门导入
+  var words = CHANNEL_KEYWORDS[c.id] || [c.name + 'MV'];
+  var ci = 0;
+  function nextKw(){
+    if(ci >= words.length) return;
+    var w = words[ci++];
+    if(hasBili()){
+      window.audioAPI.biliSearch(w).then(function(r){
+        if(state.curChannel && state.curChannel.id !== c.id) return; // 已换频道则丢弃
+        var added = mergeBili(r, c);
+        if(added) toast('「'+c.name+'」搜索补充 '+added+' 首','');
+        if(!state.playing && state.curChannel && state.curChannel.id===c.id) advance();
+      }).catch(function(){});
+    }
+    // 网易云源：登录后自动按同批关键词搜 MV 扩充（匿名被风控，登录后才有）
+    if(hasNetease() && neteaseState.loggedIn){
+      window.audioAPI.neteaseSearch(w + ' MV').then(function(r){
+        if(state.curChannel && state.curChannel.id!==c.id) return;
+        var a2 = mergeNetease(r, c);
+        if(a2) toast('「'+c.name+'」网易云补充 '+a2+' 首','');
+      }).catch(function(){});
+    }
+    setTimeout(nextKw, 1500); // 间隔，降低风控
+  }
+  nextKw();
+}
+/* ---------- 曲库（本地持久化海量池） ---------- */
+var exploring = false, popularDone = false, advTimer = null;
+function hasVault(){ return !!(window.audioAPI && window.audioAPI.vaultStats); }
+function refreshVaultStat(){
+  if(!hasVault()) return;
+  window.audioAPI.vaultStats().then(function(s){
+    if(s) $('vaultNum').textContent = (s.total||0).toLocaleString();
+  }).catch(function(){});
+}
+function ensureVault(c){
+  if(!hasVault() || !c || !c.id) return;
+  // 拉当前主题曲库池
+  window.audioAPI.vaultPull(c.id, 60).then(function(items){
+    if(state.curChannel && state.curChannel.id===c.id) mergeVault(items, c, true);
+  }).catch(function(){});
+  // 相关视频链挖掘（单飞，后台持续累积）
+  if(!exploring) triggerExplore(c);
+  // 站内热门导入（每会话一次）
+  if(!popularDone){
+    popularDone = true;
+    window.audioAPI.vaultPopular().then(function(r){
+      if(r && r.added) refreshVaultStat();
+    }).catch(function(){});
+  }
+}
+function triggerExplore(c, seedsOverride, maxNodes, silent){
+  if(!hasVault()) return;
+  exploring = true;
+  var seeds = seedsOverride;
+  if(!seeds || !seeds.length) seeds = (c.items||[]).map(function(it){ return bvidOf(it); }).filter(Boolean);
+  if(!seeds.length) seeds = ['BV1d4411N7zD','BV1a6shzXEjb','BV1Gr4nzFEAM','BV11u4y117bw'];
+  window.audioAPI.vaultExplore(c.id, seeds, maxNodes || 36).then(function(r){
+    exploring = false;
+    if(r && r.added) refreshVaultStat();
+    if(state.curChannel && state.curChannel.id===c.id){
+      window.audioAPI.vaultPull(c.id, 80).then(function(items){ mergeVault(items, c, false); }).catch(function(){});
+    }
+    scheduleNextExplore(c);   // 持续挖掘：越推越多
+  }).catch(function(){ exploring=false; scheduleNextExplore(c); });
+}
+var sustainTimer = null;
+function scheduleNextExplore(c){
+  if(!hasVault() || !c) return;
+  if(sustainTimer) clearTimeout(sustainTimer);
+  sustainTimer = setTimeout(function(){
+    if(!state.playing || !state.curChannel || state.curChannel.id!==c.id) return; // 离开频道/停止播放则暂停挖掘
+    if(exploring){ scheduleNextExplore(c); return; }
+    window.audioAPI.vaultPull(c.id, 30).then(function(items){
+      var seeds = (items||[]).map(function(it){ return it.bvid; }).filter(Boolean).slice(0,6);
+      if(seeds.length) triggerExplore(c, seeds, 24, true);
+      else scheduleNextExplore(c);
+    }).catch(function(){ scheduleNextExplore(c); });
+  }, 42000); // 每 42 秒自动续挖一轮
+}
+function mergeVault(items, c, silent){
+  if(!items || !items.length) return 0;
+  var added = 0;
+  items.forEach(function(it){
+    if(!it.bvid) return;
+    var u = 'https://www.bilibili.com/video/'+it.bvid;
+    if(state.played[u]) return;
+    if(deadSet[it.bvid]) return;   // 失效黑名单不再入队
+    if(state.queue.some(function(x){ return x.u===u; })) return;
+    state.queue.push({t:it.title||it.bvid, a:'曲库 · '+(it.author||'B站'), u:u, k:'bili', bv:it.bvid});
+    added++;
+  });
+  if(added) refreshVaultStat();
+  return added;
+}
+function mergeBili(r, c){
+  if(!r || !r.ok || !r.list || !r.list.length) return 0;
+  var added = 0;
+  r.list.forEach(function(it){
+    var m = /(BV[0-9A-Za-z]{10})/.exec(it.bvid||'');
+    if(!m) return;
+    var u = 'https://www.bilibili.com/video/'+m[1];
+    if(state.played[u]) return;
+    if(deadSet[m[1]]) return;
+    if(state.queue.some(function(x){return x.u===u;})) return;
+    state.queue.push({t:it.title||m[1], a:'B站 · '+(it.author||''), u:u, k:'bili', bv:m[1]});
+    added++;
+  });
+  return added;
+}
+function mergeNetease(r, c){
+  if(!r || !r.ok || !r.list || !r.list.length) return 0;
+  var added = 0;
+  r.list.forEach(function(it){
+    if(!it.id) return;
+    var u = 'https://music.163.com/#/mv?id='+it.id;
+    if(state.played[u]) return;
+    if(state.queue.some(function(x){return x.u===u;})) return;
+    state.queue.push({t:it.name||('MV#'+it.id), a:'网易云 · '+(it.artist||''), u:u, k:'netease', mid:String(it.id)});
+    added++;
+  });
+  return added;
+}
+
+/* ---------- 播放核心 ---------- */
+var video = $('video');
+var failGuard = {};
+var resolveCache = {};
+var pagesCache = {};
+/* 失效源黑名单（本机持久化）：解析/播放失败的片源记录一次，后续自动跳过不再反复试 */
+var deadSet = {};
+try{ deadSet = JSON.parse(localStorage.getItem('yytv.dead')) || {}; }catch(e){ deadSet = {}; }
+function deadKey(it){ return (it && (it.bv || it.mid)) || bvidOf(it) || midOf(it) || (it && it.u) || ''; }
+function isDead(it){ if(!it) return false; return !!deadSet[deadKey(it)]; }
+function markDead(it){ var k=deadKey(it); if(!k) return; deadSet[k]=1; try{ localStorage.setItem('yytv.dead', JSON.stringify(deadSet)); }catch(e){} }
+
+function isBili(it){ return !!(it && (it.k==='bili' || /bilibili\.com/i.test(it.u||''))); }
+function bvidOf(it){ if(it.bv) return it.bv; var m=/(BV[0-9A-Za-z]{10})/.exec(it.u||''); return m?m[1]:null; }
+function isNetease(it){ return !!(it && (it.k==='netease' || /music\.163\.com/i.test(it.u||''))); }
+function midOf(it){ if(it.mid) return it.mid; var m=/(?:mv\?id=|mv\/)(\d+)/.exec(it.u||''); return m?m[1]:null; }
+
+function advance(){
+  if(!state.curChannel || !state.queue.length){
+    if(state.random) feedRandomChannel();
+    else bigEmpty();
+    return;
+  }
+  var unplayed = [];
+  state.queue.forEach(function(it,i){ if(!state.played[it.u] && !isDead(it)) unplayed.push(i); });
+  if(!unplayed.length){
+    expandFeed(state.curChannel);   // 拉曲库 + 挖掘 + 搜索
+    pullOfficialHot(state.curChannel); // 官方推荐层：主题池播完 → 官方热门续播
+    if(advTimer) clearTimeout(advTimer);
+    advTimer = setTimeout(function(){   // 给曲库/挖掘一点时间再续播，避免空转
+      if(!state.curChannel) return;
+      var un2 = [];
+      state.queue.forEach(function(it,i){ if(!state.played[it.u] && !isDead(it)) un2.push(i); });
+      if(un2.length){
+        var j = un2[Math.floor(Math.random()*un2.length)];
+        var it2 = state.queue[j]; state.played[it2.u]=true; state.qi=j; playIndex(j);
+      } else if(state.random){ feedRandomChannel(); }
+      else { /* 正在补充官方热门，静默续播 */ }
+    }, 2600);
+    return;
+  }
+  var idx = unplayed[Math.floor(Math.random()*unplayed.length)];
+  var item = state.queue[idx];
+  state.played[item.u] = true;
+  state.qi = idx;
+  playIndex(idx);
+}
+/* 官方推荐层：主题池播完 → 拉官方热门池续播（每日刷新，永不枯竭） */
+function pullOfficialHot(c){
+  if(!hasVault() || !c) return;
+  window.audioAPI.vaultPull('hot', 40).then(function(items){
+    if(!items || !items.length) return;
+    if(state.curChannel && state.curChannel.id===c.id){
+      var added = mergeVault(items, c, true);
+      if(added) refreshVaultStat();   // 数量静默更新到片源弹窗，不再弹提示
+    }
+  }).catch(function(){});
+}
+function playIndex(i){
+  var q = state.queue;
+  if(!q.length){ bigEmpty(); return; }
+  if(i<0 || i>=q.length) i = 0;
+  var item = q[i];
+  if(!item || !item.u){ q.splice(i,1); return playIndex(i); }
+  if(isDead(item)){ q.splice(i,1); state.played[item.u]=true; return advance(); }  // 已知失效源直接跳过
+  state.qi = i;
+  setNowPlaying(item);
+  failGuard[item.u] = (failGuard[item.u]||0);
+  if(failGuard[item.u] >= 3){ markDead(item); toast('该片源持续失败，已加入失效黑名单：'+(item.t||''),'err'); q.splice(i,1); state.played[item.u]=true; return advance(); }
+  if(isBili(item)){ playBili(item); }
+  else if(isNetease(item)){ playNetease(item); }
+  else { startSrc(item.u); }
+}
+function playBili(item){
+  var bv = bvidOf(item);
+  if(!bv){ toast('B站链接无效，自动跳过','err'); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,500); return; }
+  // 分P合集：先看有几P（OP/ED合集可拆成单曲电台）；页面/分P条目已带 cid 直接播
+  if(!item.cid){
+    if(pagesCache[bv]){
+      if(pagesCache[bv].length > 1){ if(expandPagesFromCache(item, bv)){ advance(); return; } }
+      else { playBiliSingle(item, bv); return; }
+    }
+    if(window.audioAPI && window.audioAPI.biliPages){
+      window.audioAPI.biliPages(bv).then(function(pr){
+        pagesCache[bv] = (pr && pr.ok && pr.pages) ? pr.pages : [];
+        if(pagesCache[bv].length > 1){
+          if(expandPagesFromCache(item, bv)){ advance(); return; }
+        } else {
+          playBiliSingle(item, bv); return;
+        }
+        toast('合集无有效分P，自动切下一首','err'); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,500);
+      }).catch(function(){ playBiliSingle(item, bv); });
+      return;
+    }
+  }
+  playBiliSingle(item, bv);
+}
+function expandPagesFromCache(item, bv){
+  return expandPages(item, pagesCache[bv], item.t);
+}
+function playBiliSingle(item, bv){
+  if(resolveCache['b:'+bv] && !item.cid){ startSrc(resolveCache['b:'+bv].url); return; }
+  if(resolveCache['bc:'+bv+':'+item.cid]){ startSrc(resolveCache['bc:'+bv+':'+item.cid].url); return; }
+  $('nowTitle').textContent = item.t || '';
+  if(!window.audioAPI){ toast('B站播放仅桌面版支持','err'); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,500); return; }
+  var req = item.cid
+    ? window.audioAPI.biliResolveCid(bv, item.cid, item.part)
+    : window.audioAPI.biliResolve(bv);
+  req.then(function(r){
+    if(r && r.ok){
+      if(item.cid) resolveCache['bc:'+bv+':'+item.cid] = r;
+      else resolveCache['b:'+bv] = r;
+      startSrc(r.url);
+    }
+    else { toast('B站解析失败，自动切下一首','err'); markDead(item); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,600); }
+  }).catch(function(){ markDead(item); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,600); });
+}
+/* 把分P合集拆成单曲入队（每P=一首，随机连播） */
+function expandPages(item, pages, collTitle){
+  if(!pages || !pages.length) return 0;
+  var added = 0;
+  var coll = (collTitle || item.t || 'B站合集').replace(/[【】\[\]]/g,'');
+  pages.forEach(function(pg, i){
+    var u = 'https://www.bilibili.com/video/'+item.bv+'?p='+pg.p;
+    if(state.played[u]) return;
+    if(state.queue.some(function(x){ return x.u===u; })) return;
+    state.queue.push({
+      t: pg.part || coll, a: coll + ' · ' + (item.a||'B站'),
+      u: u, k:'bili', bv: item.bv, cid: pg.cid, part: pg.part||'', coll: true
+    });
+    added++;
+  });
+  if(added) refreshVaultStat();
+  return added;
+}
+/* 选频道时主动预拆：标题像「合集/分P/OPED」的种子直接拆成单曲进队 */
+function preExpandSeeds(c){
+  if(!window.audioAPI || !window.audioAPI.biliPages || !c || !c.items) return;
+  c.items.forEach(function(it){
+    var probe = (it.t||'') + ' ' + (it.a||'');
+    if(!/合集|分P|OP.?ED|OPED|全集|OP ED/i.test(probe)) return;
+    var bv = bvidOf(it); if(!bv) return;
+    if(pagesCache[bv]){ applyPageExpand(it, bv); return; }
+    window.audioAPI.biliPages(bv).then(function(pr){
+      if(pr && pr.ok && pr.pages && pr.pages.length>1){
+        pagesCache[bv] = pr.pages;
+        applyPageExpand(it, bv);
+      }
+    }).catch(function(){});
+  });
+}
+function applyPageExpand(it, bv){
+  var qidx = state.queue.findIndex(function(x){ return x.u===it.u; });
+  if(qidx>=0) state.queue.splice(qidx,1);
+  expandPages(it, pagesCache[bv] || [], it.t);
+}
+function playNetease(item){
+  var mid = midOf(item);
+  if(!mid){ toast('网易云链接无效，自动跳过','err'); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,500); return; }
+  if(resolveCache['n:'+mid]){ startSrc(resolveCache['n:'+mid].url); return; }
+  $('nowTitle').textContent = item.t || '';
+  if(!window.audioAPI || !window.audioAPI.neteaseResolve){ toast('网易云播放仅桌面版支持','err'); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,500); return; }
+  window.audioAPI.neteaseResolve(mid).then(function(r){
+    if(r && r.ok){ resolveCache['n:'+mid] = r; startSrc(r.url); }
+    else { toast('网易云解析失败，自动切下一首','err'); markDead(item); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,600); }
+  }).catch(function(){ markDead(item); failGuard[item.u]=(failGuard[item.u]||0)+1; setTimeout(advance,600); });
+}
+function startSrc(url){
+  video.src = url;
+  video.load();
+  video.muted = false;   // 绝不残留静音（修"所有视频没声音"）
+  var p = video.play();
+  if(p && p.catch){ p.catch(function(){
+    // 自动播放被浏览器拦截：先静音把画面播起来，等用户任意点击/按键即恢复声音
+    video.muted = true;
+    var pp = video.play(); if(pp && pp.catch) pp.catch(function(){});
+    var um = function(){ video.muted = false; document.removeEventListener('pointerdown', um); document.removeEventListener('keydown', um); };
+    document.addEventListener('pointerdown', um);
+    document.addEventListener('keydown', um);
+  }); }
+}
+/* 视频加载出真实尺寸后，通知主进程按视频比例"刚好填充"窗口（无黑边），并锁定该比例 */
+video.addEventListener('loadedmetadata', function(){
+  if(window.audioAPI && window.audioAPI.videoRatio && video.videoWidth > 0){
+    window.audioAPI.videoRatio(video.videoWidth, video.videoHeight).catch(function(){});
+  }
+});
+function togglePlay(){
+  if(!state.queue.length){ feedRandomChannel(); return; }
+  if(video.paused){ video.play().catch(function(){}); }
+  else video.pause();
+}
+function bigEmpty(){ $('bigEmpty').style.display='flex'; }
+function setNowPlaying(item){
+  $('bigEmpty').style.display='none';
+  document.body.classList.add('playing');
+  $('nowTitle').textContent = item.t || '未知曲目';
+  $('nowArtist').textContent = item.a || '';
+  recordHistory(item);
+}
+
+/* ---------- 视频事件 ---------- */
+video.addEventListener('play', function(){ state.playing=true; syncChrome(); });
+video.addEventListener('pause', function(){ state.playing=false; });
+video.addEventListener('ended', function(){ advance(); });
+video.addEventListener('error', function(){
+  if(!video.src || !state.queue.length) return;
+  var it = state.queue[state.qi];
+  if(it){ failGuard[it.u] = (failGuard[it.u]||0)+1; if(failGuard[it.u]>=2) markDead(it); }
+  // 用户点击"恢复播放"后 2 秒内源失效：不立即自动换片（避免"单击就换视频"），缓 4 秒再走
+  if(Date.now() - _resumeT < 2000){ _resumeT = 0; setTimeout(function(){ advance(); }, 4000); return; }
+  setTimeout(function(){ advance(); }, 600);
+});
+
+/* ---------- 双击视频=最大化/还原（迷你态双击=还原） / 主窗口全局拖拽（JS版：除控件外任意处按住可拖） / 视频单击暂停 ---------- */
+video.addEventListener('dblclick', function(){
+  if(inMini){ toggleMini(); return; }
+  if(window.audioAPI && window.audioAPI.winMax) window.audioAPI.winMax();
+});
+/* 全局拖拽：document 上按任意非控件区域即可拖动主/迷你窗口；移动>4px 判定为拖动；
+   单击（未移动）在视频上则暂停/播放；双击的第二击不启拖拽以保留双击最大化 */
+var _pd = null, _dragLastT = 0, _justDragged = false;
+function _isDragSurface(e){
+  if(e.button !== 0) return false;
+  var t = e.target;
+  if(!t || t.closest) {
+    // 全屏可拖拽：只排除真正需要点击的控件，其余（含顶部/底部栏空白处）都可拖动窗口
+    var hit = t.closest && t.closest('.cstrip,.mini-close,.mini-grip,.ctxmenu,.hud,#welcome,#srcMask,#histMask,button,input,select,.modal,.volbtn,.chpage,.cpp');
+    if(hit) return false;
+  }
+  return true;
+}
+document.addEventListener('mousedown', function(e){
+  if(!_isDragSurface(e)) return;
+  var now = Date.now();
+  if(now - _dragLastT < 350) return;   // 双击第二击不拖
+  _dragLastT = now;
+  _pd = { sx: e.screenX, sy: e.screenY, started:false };
+});
+document.addEventListener('mousemove', function(e){
+  if(!_pd) return;
+  if(!_pd.started){
+    var dx = e.screenX - _pd.sx, dy = e.screenY - _pd.sy;
+    if(dx*dx + dy*dy > 64){ _pd.started = true; if(window.audioAPI && window.audioAPI.winDrag) window.audioAPI.winDrag('start', _pd.sx, _pd.sy).catch(function(){}); }   // 移动>8px 才算拖窗口，单击绝对不触发拖动
+  }
+  if(_pd.started && window.audioAPI && window.audioAPI.winDrag) window.audioAPI.winDrag('move', e.screenX, e.screenY).catch(function(){});
+});
+document.addEventListener('mouseup', function(){
+  if(_pd){ _justDragged = _pd.started; _pd = null; }
+  if(window.audioAPI && window.audioAPI.winDrag) window.audioAPI.winDrag('end').catch(function(){});
+});
+var _resumeT = 0;
+/* 视频单击=暂停/播放（拖动窗口不误触）；双击仍全屏 */
+video.addEventListener('click', function(){
+  if(_justDragged){ _justDragged = false; return; }
+  if(video.paused){ _resumeT = Date.now(); video.play().catch(function(){}); } else { video.pause(); }
+});
+function setVol(v){
+  state.vol = Math.min(1,Math.max(0,v)); video.volume = state.vol;
+  var pct = Math.round(state.vol*100);
+  $('volRange').value = pct;
+  try{ localStorage.setItem(LS_VOL, state.vol); }catch(e){}
+}
+/* 音量按钮=一键静音/恢复；右侧滑杆=精细调音量 */
+var _mutedFlag=false, _lastVol=0.8;
+$('volBtn').onclick = function(){
+  _mutedFlag = !_mutedFlag;
+  if(_mutedFlag){ _lastVol = video.volume; video.volume = 0; }
+  else { setVol(_lastVol); }
+};
+$('volRange').addEventListener('input', function(){
+  _mutedFlag=false; setVol(this.value/100);
+});
+/* ---------- 画质（未登录默认低清，登录默认高清；可手动切换并记忆） ---------- */
+var QUAL = [ {n:'自动', qn:0}, {n:'流畅', qn:16}, {n:'标清', qn:32}, {n:'高清', qn:64}, {n:'超清', qn:80} ];
+var qualIdx = 0;
+try{ var _qs = parseInt(localStorage.getItem('yytv.qual'),10); if(!isNaN(_qs) && _qs>=0 && _qs<QUAL.length) qualIdx=_qs; }catch(e){}
+function qualLabel(){ return '画质·'+QUAL[qualIdx].n; }
+function qualEff(){ // 自动模式：未登录→标清32，登录→高清64
+  if(QUAL[qualIdx].qn) return QUAL[qualIdx].qn;
+  return _biliLogged ? 64 : 32;
+}
+function sendQual(){
+  var qn = QUAL[qualIdx].qn; // 0=自动（主进程按登录自动）
+  if(window.audioAPI && window.audioAPI.setBiliQuality) window.audioAPI.setBiliQuality(qn).catch(function(){});
+  try{ localStorage.setItem('yytv.qual', String(qualIdx)); }catch(e){}
+}
+$('qualBtn').onclick = function(){
+  qualIdx = (qualIdx+1) % QUAL.length;
+  $('qualBtn').textContent = qualLabel();
+  $('qualBtn').classList.toggle('on', QUAL[qualIdx].qn!==0);
+  sendQual();
+  toast('画质：'+QUAL[qualIdx].n+(QUAL[qualIdx].qn? '（下次播放生效）':'（按登录状态自动）'), '');
+};
+function refreshQualBtn(){
+  $('qualBtn').textContent = qualLabel();
+  $('qualBtn').classList.toggle('on', QUAL[qualIdx].qn!==0);
+}
+/* 播放前强制应用一次当前画质，保证登录后自动升高清 */
+function applyQualBeforePlay(){
+  if(window.audioAPI && window.audioAPI.setBiliQuality) window.audioAPI.setBiliQuality(QUAL[qualIdx].qn).catch(function(){});
+}
+
+/* ---------- 收藏 ---------- */
+function isFav(it){ return favChannel().items.some(function(x){ return x.u===it.u; }); }
+function toggleFav(it){
+  var fc=favChannel();
+  var idx=fc.items.findIndex(function(x){return x.u===it.u;});
+  if(idx>=0){ fc.items.splice(idx,1); toast('已取消收藏',''); }
+  else { fc.items.push(JSON.parse(JSON.stringify(it))); toast('已加入「我的收藏」','ok'); }
+  saveChannels(); renderChannels();
+}
+
+/* ---------- 片源管理 ---------- */
+var editChannelId = null;
+function openSrc(){
+  editChannelId = channels[0].id;
+  renderSrcChannels(); renderSrcText();
+  $('srcMask').classList.add('show');
+}
+function renderSrcChannels(){
+  var box=$('srcChannels'); box.innerHTML='';
+  channels.forEach(function(c){
+    var el=document.createElement('button');
+    el.className='chip'+(c.id===editChannelId?' active':'');
+    el.textContent=c.name+' ('+c.items.length+')';
+    el.onclick=function(){ editChannelId=c.id; renderSrcChannels(); renderSrcText(); };
+    box.appendChild(el);
+  });
+}
+function renderSrcText(){
+  var c=channels.find(function(x){return x.id===editChannelId;});
+  $('srcText').value = c ? c.items.map(function(it){ return it.t+' | '+(it.a||'')+' | '+it.u; }).join('\n') : '';
+}
+function parseItems(text){
+  var out=[];
+  text.split(/\r?\n/).forEach(function(line){
+    line=line.trim(); if(!line) return;
+    var parts=line.split('|').map(function(s){return s.trim();});
+    var t='', a='', u='';
+    if(parts.length>=3 && /^https?:\/\//i.test(parts[2])){ t=parts[0]; a=parts[1]; u=parts[2]; }
+    else if(parts.length>=1 && /^https?:\/\//i.test(parts[0])){ u=parts[0]; }
+    else if(parts.length>=1 && /^BV[0-9A-Za-z]{10}$/.test(parts[0])){ u='https://www.bilibili.com/video/'+parts[0]; t=parts[0]; }
+    if(!u) return;
+    var bvm=/(BV[0-9A-Za-z]{10})/.exec(u);
+    if(bvm && (/bilibili\.com/i.test(u) || /^BV[0-9A-Za-z]{10}$/.test(u))){
+      out.push({t:t||bvm[1], a:a||'B站', u:'https://www.bilibili.com/video/'+bvm[1], k:'bili', bv:bvm[1]});
+      return;
+    }
+    var nm=/(?:mv\?id=|mv\/)(\d+)/.exec(u);
+    if(nm && /music\.163\.com/i.test(u)){
+      out.push({t:t||('网易云MV#'+nm[1]), a:a||'网易云', u:'https://music.163.com/#/mv?id='+nm[1], k:'netease', mid:nm[1]});
+      return;
+    }
+    out.push({t:t, a:a, u:u});
+  });
+  return out;
+}
+$('srcSave').onclick=function(){
+  var c=channels.find(function(x){return x.id===editChannelId;});
+  if(!c) return;
+  c.items=parseItems($('srcText').value);
+  saveChannels(); renderChannels();
+};
+$('srcImport').onclick=function(){
+  if(navigator.clipboard && navigator.clipboard.readText){
+    navigator.clipboard.readText().then(function(txt){
+      if(txt){ $('srcText').value = $('srcText').value ? $('srcText').value+'\n'+txt : txt; }
+      else toast('剪贴板为空','warn');
+    }).catch(function(){ toast('无法读取剪贴板，请手动粘贴','warn'); });
+  } else toast('当前环境不支持读取剪贴板','warn');
+};
+$('srcLocal').onclick=function(){
+  if(window.audioAPI && window.audioAPI.pickVideos){ window.audioAPI.pickVideos().then(addLocalFiles); }
+  else $('fileInput').click();
+};
+$('fileInput').onchange=function(){
+  var files=Array.prototype.slice.call($('fileInput').files||[]);
+  var arr=files.map(function(f){ return {t: f.name.replace(/\.[^.]+$/,''), a:'本地文件', u:URL.createObjectURL(f)}; });
+  addLocalFiles(arr);
+  $('fileInput').value='';
+};
+function addLocalFiles(arr){
+  if(!arr || !arr.length) return;
+  var c=channels.find(function(x){return x.id===editChannelId;});
+  if(!c) return;
+  arr.forEach(function(it){ c.items.push(it); });
+  saveChannels(); renderSrcText(); renderChannels();
+}
+$('srcClear').onclick=function(){
+  var c=channels.find(function(x){return x.id===editChannelId;});
+  if(!c) return;
+  c.items=[];
+  saveChannels(); renderSrcText(); renderChannels();
+  toast('已清空「'+c.name+'」','');
+};
+$('srcReset').onclick=function(){
+  var oldFav=favChannel().items.slice();
+  channels = JSON.parse(JSON.stringify(DEFAULT_CHANNELS));
+  if(oldFav.length){ var fc=favChannel(); fc.items=oldFav; }
+  saveChannels(); renderSrcChannels(); renderSrcText(); renderChannels();
+  toast('已恢复默认片源','ok');
+};
+$('srcClose').onclick=function(){ $('srcMask').classList.remove('show'); };
+$('srcMask').addEventListener('click',function(e){ if(e.target===$('srcMask')) $('srcMask').classList.remove('show'); });
+
+/* ---------- B站：登录 / 搜索 ---------- */
+var biliState={loggedIn:false};
+function hasBili(){ return !!(window.audioAPI && window.audioAPI.biliStatus); }
+var biliState = {}; var _biliLogged = false;
+function refreshBili(){
+  if(!hasBili()){ $('biliState').textContent='B站：仅桌面版支持'; return; }
+  window.audioAPI.biliStatus().then(function(s){
+    biliState=s||{loggedIn:false};
+    _biliLogged = !!biliState.loggedIn;
+    var el=$('biliState');
+    if(biliState.loggedIn){
+      el.textContent='B站：已登录 '+(biliState.name||'')+'，全站热门抓取更稳';
+      $('biliLoginBtn').style.display='none'; $('biliLogoutBtn').style.display='';
+    } else {
+      el.textContent='B站：未登录（可播种子；登录后全站热门抓取更全更稳）';
+      $('biliLoginBtn').style.display=''; $('biliLogoutBtn').style.display='none';
+    }
+    refreshQualBtn(); sendQual(); // 画质按钮反映登录状态（自动=未登录标清/已登录高清）
+  }).catch(function(){});
+}
+$('biliLoginBtn').onclick=function(){
+  if(!hasBili()){ toast('仅桌面版支持登录B站','warn'); return; }
+  toast('正在打开B站登录窗口，请在弹出的窗口扫码/登录…','');
+  $('biliLoginBtn').textContent='登录中…（在弹出的窗口扫码）'; $('biliLoginBtn').disabled=true;
+  window.audioAPI.biliLogin().then(function(r){
+    $('biliLoginBtn').textContent='登录B站'; $('biliLoginBtn').disabled=false;
+    if(r && r.ok){ toast('B站登录成功：'+(r.user&&r.user.name||''),'ok'); }
+    else toast('未完成B站登录','warn');
+    refreshBili();
+  }).catch(function(){ $('biliLoginBtn').textContent='登录B站'; $('biliLoginBtn').disabled=false; toast('登录窗口打开失败','err'); });
+};
+$('biliLogoutBtn').onclick=function(){
+  window.audioAPI.biliLogout().then(function(){ refreshBili(); toast('已退出B站登录',''); });
+};
+$('biliSearchBtn').onclick=doBiliSearch;
+$('biliSearchInput').addEventListener('keydown',function(e){ if(e.key==='Enter') doBiliSearch(); });
+function doBiliSearch(){
+  var kw=$('biliSearchInput').value.trim();
+  if(!kw){ toast('请输入搜索关键词','warn'); return; }
+  if(!hasBili()){ toast('B站搜索仅在桌面版可用','warn'); return; }
+  var box=$('biliResults'); box.innerHTML='<div class="hint">搜索中…</div>';
+  window.audioAPI.biliSearch(kw).then(function(r){
+    if(!r || !r.ok){ box.innerHTML='<div class="hint">'+(r&&r.msg?r.msg:'搜索失败（匿名可能被风控，建议登录）')+'</div>'; return; }
+    if(!r.list || !r.list.length){ box.innerHTML='<div class="hint">没有找到结果，换个关键词试试</div>'; return; }
+    box.innerHTML='';
+    r.list.forEach(function(it){
+      var row=document.createElement('div');
+      row.className='rrow';
+      row.innerHTML='<div class="info"><div class="t">'+it.title+'</div><div class="a">'+it.author+' · '+it.duration+' · 播放 '+it.play+'</div></div>'+
+        '<button class="btn primary" style="flex:none;padding:5px 11px">＋加入</button>';
+      row.querySelector('button').onclick=function(){ addBiliItem(it); };
+      box.appendChild(row);
+    });
+  });
+}
+function addBiliItem(it){
+  var c=channels.find(function(x){return x.id===editChannelId;});
+  if(!c) return;
+  var bv=(/(BV[0-9A-Za-z]{10})/.exec(it.bvid||'')||[])[0];
+  if(!bv){ toast('无效的B站视频','err'); return; }
+  c.items.push({t:it.title||bv, a:'B站 · '+(it.author||''), u:'https://www.bilibili.com/video/'+bv, k:'bili', bv:bv});
+  saveChannels(); renderSrcText(); renderChannels();
+}
+
+/* ---------- 网易云：登录 / 搜索 ---------- */
+var neteaseState={loggedIn:false};
+function hasNetease(){ return !!(window.audioAPI && window.audioAPI.neteaseStatus); }
+function refreshNetease(){
+  if(!hasNetease()){ $('neteaseState').textContent='网易云：仅桌面版支持'; return; }
+  window.audioAPI.neteaseStatus().then(function(s){
+    neteaseState=s||{loggedIn:false};
+    var el=$('neteaseState');
+    if(neteaseState.loggedIn){
+      el.textContent='网易云：已登录，热门里会混入网易云 MV';
+      $('neteaseLoginBtn').style.display='none'; $('neteaseLogoutBtn').style.display='';
+    } else {
+      el.textContent='网易云：未登录（需登录后才能搜 MV）';
+      $('neteaseLoginBtn').style.display=''; $('neteaseLogoutBtn').style.display='none';
+    }
+  }).catch(function(){});
+}
+$('neteaseLoginBtn').onclick=function(){
+  if(!hasNetease()){ toast('仅桌面版支持登录网易云','warn'); return; }
+  toast('正在打开网易云登录窗口，请在弹出的窗口登录…','');
+  $('neteaseLoginBtn').textContent='登录中…（在弹出的窗口扫码/登录）'; $('neteaseLoginBtn').disabled=true;
+  window.audioAPI.neteaseLogin().then(function(r){
+    $('neteaseLoginBtn').textContent='登录网易云'; $('neteaseLoginBtn').disabled=false;
+    if(r && r.ok){ toast('网易云登录成功，热门里将混入网易云 MV','ok'); }
+    else toast('未完成网易云登录','warn');
+    refreshNetease();
+  }).catch(function(){ $('neteaseLoginBtn').textContent='登录网易云'; $('neteaseLoginBtn').disabled=false; toast('登录窗口打开失败','err'); });
+};
+$('neteaseLogoutBtn').onclick=function(){
+  window.audioAPI.neteaseLogout().then(function(){ refreshNetease(); toast('已退出网易云登录',''); });
+};
+$('neteaseSearchBtn').onclick=doNeteaseSearch;
+$('neteaseSearchInput').addEventListener('keydown',function(e){ if(e.key==='Enter') doNeteaseSearch(); });
+function doNeteaseSearch(){
+  var kw=$('neteaseSearchInput').value.trim();
+  if(!kw){ toast('请输入搜索关键词','warn'); return; }
+  if(!hasNetease()){ toast('网易云搜索仅在桌面版可用','warn'); return; }
+  var box=$('neteaseResults'); box.innerHTML='<div class="hint">搜索中…</div>';
+  window.audioAPI.neteaseSearch(kw).then(function(r){
+    if(!r || !r.ok){ box.innerHTML='<div class="hint">'+(r&&r.msg?r.msg:'搜索失败')+'</div>'; return; }
+    if(!r.list || !r.list.length){ box.innerHTML='<div class="hint">没有找到结果，换个关键词试试</div>'; return; }
+    box.innerHTML='';
+    r.list.forEach(function(it){
+      var row=document.createElement('div');
+      row.className='rrow';
+      var dur = it.dur ? fmt(Math.round(it.dur/1000)) : '';
+      row.innerHTML='<div class="info"><div class="t">'+it.name+'</div><div class="a">'+it.artist+' · '+dur+' · 播放 '+it.play+'</div></div>'+
+        '<button class="btn primary" style="flex:none;padding:5px 11px">＋加入</button>';
+      row.querySelector('button').onclick=function(){ addNeteaseItem(it); };
+      box.appendChild(row);
+    });
+  });
+}
+function addNeteaseItem(it){
+  var c=channels.find(function(x){return x.id===editChannelId;});
+  if(!c) return;
+  if(!it.id){ toast('无效的网易云MV','err'); return; }
+  c.items.push({t:it.name||('MV#'+it.id), a:'网易云 · '+(it.artist||''), u:'https://music.163.com/#/mv?id='+it.id, k:'netease', mid:String(it.id)});
+  saveChannels(); renderSrcText(); renderChannels();
+}
+
+/* ---------- 右键菜单 ---------- */
+var ctx=$('ctxMenu');
+document.addEventListener('contextmenu', function(e){
+  e.preventDefault();
+  ctx.style.left = Math.min(e.clientX, window.innerWidth-200) + 'px';
+  ctx.style.top  = Math.min(e.clientY, window.innerHeight-320) + 'px';
+  ctx.classList.add('show');
+});
+document.addEventListener('click', function(){ ctx.classList.remove('show'); });
+ctx.addEventListener('click', function(e){
+  var mi = e.target.closest('.mi'); if(!mi) return;
+  var act = mi.getAttribute('data-act');
+  ctx.classList.remove('show');
+  if(act==='yinyuetai'){ toast('音悦台已于 2019 年关停，这里是 1:1 复刻版',''); }
+  else if(act==='airplay'){ toast('AIRPLAY · 原版客户端品牌（2012）',''); }
+  else if(act==='yinyuetai_weibo' || act==='airplay_weibo'){ toast('原官方微博已随网站关停',''); }
+  else if(act==='pin'){ $('btnPin').click(); }
+  else if(act==='random'){ toggleRadio(); }
+  else if(act==='fav'){ var fc=favChannel(); if(fc.items.length){ feedChannel('fav', true); toast('正在播放「我的收藏」','ok'); } else toast('收藏夹还是空的','warn'); }
+  else if(act==='sources'){ openSrc(); }
+  else if(act==='mini'){ toggleMini(); }
+  else if(act==='exit'){ api('winClose'); }
+});
+
+/* ---------- 欢迎层 / 控制按钮 ---------- */
+function showWelcomeIfFirst(){
+  try{
+    if(localStorage.getItem(LS_FIRST)) return;
+    localStorage.setItem(LS_FIRST,'1');
+    if(location.search.indexOf('welcome=0')>=0) return;
+    $('welcome').classList.add('show');
+  }catch(e){}
+}
+$('welcomeGo').onclick=function(){ $('welcome').classList.remove('show'); feedRandomChannel(); };
+$('histBtn').onclick=openHistory;
+$('histClose').onclick=function(){ $('histMask').classList.remove('show'); };
+$('histMask').onclick=function(e){ if(e.target===$('histMask')) $('histMask').classList.remove('show'); };
+$('histClear').onclick=function(){ try{ localStorage.removeItem(LS_HIST); }catch(e){}; renderHistory(); toast('播放历史已清空',''); };
+/* ---------- 播放历史（本机） ---------- */
+var LS_HIST='yytv.history';
+function getHistory(){ try{ var a=JSON.parse(localStorage.getItem(LS_HIST)); return Array.isArray(a)?a:[]; }catch(e){ return []; } }
+function recordHistory(it){
+  if(!it || !it.u) return;
+  try{
+    var a=getHistory();
+    a=a.filter(function(x){ return x.u!==it.u; });
+    a.unshift({t:it.t,a:it.a,u:it.u,k:it.k,bv:it.bv||null,mid:it.mid||null,at:Date.now()});
+    if(a.length>100) a=a.slice(0,100);
+    localStorage.setItem(LS_HIST, JSON.stringify(a));
+  }catch(e){}
+}
+function openHistory(){ renderHistory(); $('histMask').classList.add('show'); }
+function renderHistory(){
+  var list=$('histList'); list.innerHTML='';
+  var a=getHistory();
+  if(!a.length){ list.innerHTML='<div class="hint" style="padding:18px 4px">还没有播放记录，随便点个频道开始听吧。</div>'; return; }
+  a.forEach(function(it){
+    var row=document.createElement('div'); row.className='rrow'; row.style.cursor='pointer';
+    var info=document.createElement('div'); info.className='info';
+    var t=document.createElement('div'); t.className='t'; t.textContent=it.t||'未知曲目';
+    var sub=document.createElement('div'); sub.className='a'; sub.textContent=(it.a||'')+' · '+new Date(it.at||Date.now()).toLocaleString();
+    info.appendChild(t); info.appendChild(sub);
+    var play=document.createElement('div'); play.className='a'; play.style.color='var(--accent1)'; play.textContent='▶ 播放';
+    row.appendChild(info); row.appendChild(play);
+    row.onclick=function(){ playHistoryItem(it); };
+    list.appendChild(row);
+  });
+}
+function playHistoryItem(it){
+  if(!it) return;
+  $('histMask').classList.remove('show');
+  var u=it.u||'';
+  var item={t:it.t||'未知曲目',a:it.a||'',u:u,k:it.k||'bili'};
+  if(it.bv) item.bv=it.bv;
+  if(it.mid) item.mid=it.mid;
+  // 加入队列并立即播放
+  var idx=state.queue.findIndex(function(x){ return x.u===u; });
+  if(idx<0){ state.queue.push(item); idx=state.queue.length-1; }
+  state.played[u]=true; state.qi=idx; playIndex(idx);
+}
+
+/* ---------- 键盘 ---------- */
+document.addEventListener('keydown', function(e){
+  if(e.target && (e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT')) return;
+  if(e.code==='Space'){ e.preventDefault(); togglePlay(); }
+  else if(e.key==='n'||e.key==='N'){ advance(); }
+  else if(e.key==='p'||e.key==='P'){ if(state.queue.length){ var i=state.qi-1; if(i<0)i=state.queue.length-1; playIndex(i);} }
+  else if(e.key==='Escape'){ if(window.audioAPI && window.audioAPI.setFullscreen) window.audioAPI.setFullscreen(false); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); setVol(Math.min(1,state.vol+0.08)); }
+  else if(e.key==='ArrowDown'){ e.preventDefault(); setVol(Math.max(0,state.vol-0.08)); }
+});
+
+/* ---------- 迷你悬浮 ---------- */
+var inMini=false;
+function toggleMini(){
+  inMini=!inMini;
+  document.body.classList.toggle('mini', inMini);
+  if(window.audioAPI && window.audioAPI.setMini){ window.audioAPI.setMini(inMini); }
+}
+$('btnMini').onclick=toggleMini;
+$('miniClose').onclick=function(){ toggleMini(); };
+$('miniClose').addEventListener('mousedown', function(e){ e.stopPropagation(); e.preventDefault(); });
+$('miniClose').addEventListener('pointerdown', function(e){ e.stopPropagation(); });
+/* 迷你态 ESC 也能还原 */
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape' && inMini){ toggleMini(); e.preventDefault(); }
+});
+
+/* ---------- 窗口控制 ---------- */
+function api(fn){ return (window.audioAPI && window.audioAPI[fn]) ? window.audioAPI[fn]() : null; }
+$('btnMin').onclick = function(){ api('winMin'); };
+$('btnMax').onclick = function(){ api('winMax'); };
+$('btnClose').onclick = function(){ api('winClose'); };
+$('btnSrc').onclick = function(){ openSrc(); };
+$('btnSet').onclick = function(){ $('setMask').classList.add('show'); };
+$('setClose').onclick = function(){ $('setMask').classList.remove('show'); };
+$('setDone').onclick = function(){ $('setMask').classList.remove('show'); };
+$('setMask').addEventListener('click',function(e){ if(e.target===$('setMask')) $('setMask').classList.remove('show'); });
+$('btnPin').onclick = function(){
+  var r = api('winPin');
+  if(r && r.then){
+    r.then(function(pinned){
+      $('btnPin').classList.toggle('on', pinned);
+      $('ctxPinTxt').textContent = pinned?'取消置顶':'始终置顶';
+    });
+  }
+};
+function toggleRadio(){
+  state.random = !state.random; updateRadio();
+  if(state.random && !state.queue.length) feedRandomChannel();
+}
+function updateRadio(){
+  var rb = $('radioToggle'), rt = $('radioTxt');
+  if(rb) rb.classList.toggle('on', state.random);
+  if(rt) rt.textContent = state.random ? '随机电台' : '单频道';
+  $('ctxRandomTxt').textContent = '随机电台：' + (state.random?'开':'关');
+}
+
+/* ---------- 初始化 ---------- */
+(function init(){
+  try{ var v=parseFloat(localStorage.getItem(LS_VOL)); if(!isNaN(v) && v>0.001) state.vol=v; }catch(e){}  // 音量>0才恢复；0视为异常，回落默认
+  if(!(state.vol>0.001)) state.vol=0.8;   // 防"没声音"：绝不以静音状态启动
+  video.volume = state.vol;
+  video.muted = false;
+  $('volRange').value = Math.round(state.vol*100);
+  renderChannels();
+  setTimeout(loadChannelCovers, 700);   // 已缓存封面秒出；缺失的立即补拉（提前到 700ms）
+  setTimeout(loadChannelCovers, 3200);
+  updateRadio();
+  refreshBili();
+  refreshNetease();
+  refreshVaultStat();
+  showWelcomeIfFirst();
+  syncChrome();
+  if(location.search.indexOf('ui=1')>=0){ document.body.classList.add('overlay'); document.body.classList.add('playing'); }
+  if(location.search.indexOf('sources=1')>=0){ openSrc(); }
+  window.__fmDebug = function(){
+    return JSON.stringify({q: state.queue.length, pages: state.queue.filter(function(x){ return x.cid; }).length, coll: state.queue.filter(function(x){ return x.coll; }).length});
+  };
+  if(location.search.indexOf('autostart=1')>=0){
+    var qc = /[?&]channel=([^&]+)/.exec(location.search);
+    if(qc && channels.some(function(c){ return c.id===decodeURIComponent(qc[1]); })){
+      feedChannel(decodeURIComponent(qc[1]), false);
+    } else feedRandomChannel();
+  }
+  if(window.audioAPI && window.audioAPI.ready) window.audioAPI.ready();
+})();
+</script>
+</body>
+</html>

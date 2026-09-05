@@ -1,0 +1,51 @@
+{
+  "name": "kisstr-tv",
+  "productName": "KisstrTV",
+  "version": "1.0.0",
+  "description": "随机播放音乐 MV",
+  "main": "main.js",
+  "author": "KisstrTV",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable",
+    "dist:nsis": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.kisstr.tv",
+    "productName": "KisstrTV",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "main.js",
+      "preload.js",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "KisstrTV"
+    },
+    "msi": {
+      "oneClick": true,
+      "perMachine": false,
+      "shortcutName": "KisstrTV"
+    },
+    "portable": {
+      "artifactName": "KisstrTV-便携版-${version}.${ext}"
+    }
+  }
+}
