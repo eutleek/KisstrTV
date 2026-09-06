@@ -2,7 +2,7 @@
 // 职责：创建无边框窗口、窗口置顶、迷你悬浮、本地视频协议(local://)、文件选择、B站登录/解析/搜索
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, protocol, net, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, net, session, Tray, Menu, nativeImage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -31,8 +31,10 @@ let win = null;
 let pinned = false;
 let mini = false;
 let normalBounds = null;
+let tray = null;            // 系统托盘（右下角进程图标）：主窗模式驻留入口，mini 模式隐藏
+let quitting = false;       // 正在真正退出（托盘/系统退出），此时关窗放行不转驻留
 const curRatio = 16 / 9;      // 固定 16:9，窗口按它锁定比例（比例不变、无黑边）
-let ratioLocked = false;    // 用户手动调整过大小后锁定比例
+// 比例锁定改用 will-resize，原 ratioLocked 防抖已不需要
 
 /* ---------- 比例锁定：窗口固定 16:9，视频加载/拖动改大小都不改变窗口比例 ---------- */
 ipcMain.handle('video-ratio', () => curRatio);   // 保留接口兼容，不再随视频变形
@@ -78,8 +80,8 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1152,
     height: 648,              // 16:9 刚好填充（无黑边）
-    minWidth: 920,
-    minHeight: 520,
+    minWidth: 928,            // 928×522 严格 16:9（928÷16×9=522）。旧值 920×520 与比例矛盾：
+    minHeight: 522,           // 920÷16×9=517.5<520，比例锁与最小高度打架 → 缩放循环卡死（v28.4b「锁死」的真因）
     frame: false,               // 无边框，自定义标题栏
     backgroundColor: '#0c0c0e',
     show: !process.env.YYTV_SMOKE,  // 冒烟测试时不显示窗口
@@ -94,10 +96,31 @@ function createWindow() {
     }
   });
 
+  /* v29.7 比例锁定终版：OS 原生 setAspectRatio —— 拖拽全程由 Windows 按 16:9 实时联动宽高，
+     这才是「长宽同时缩放 + 丝滑」的唯一原生机制（渲染层逐帧 setBounds 必黑闪，松手归正必跳变）。
+     v28.4b 实测「锁死边缘」的真因 = 旧最小尺寸 920×520 与 16:9 矛盾（920÷16×9=517.5<520），
+     最小尺寸改为严格等比 928×522 后比例锁与下限不再打架。 */
+  try { win.setAspectRatio(curRatio); } catch (e) {}
+  win.setMaximizable(true);
+
   win.loadFile(path.join(__dirname, 'index.html'), {
     query: process.env.YYTV_AUTOSTART === '1'
       ? { autostart: '1', sources: process.env.YYTV_SOURCES === '1' ? '1' : '0', channel: process.env.YYTV_CHANNEL || '' }
       : {}
+  });
+
+  // 外部链接（GitHub 仓库 / 官网等）统一交给系统默认浏览器打开，绝不导航本窗口。
+  // target="_blank" / window.open 走 setWindowOpenHandler；普通 <a href> 跳转走 will-navigate。
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url && /^https?:/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    const cur = win.webContents.getURL() || '';
+    if (url && /^https?:/i.test(url) && url !== cur) {
+      event.preventDefault();
+      shell.openExternal(url);
+    }
   });
 
   win.once('ready-to-show', () => {
@@ -121,30 +144,54 @@ function createWindow() {
     }
   });
 
-  win.on('close', () => {
+  win.on('close', (event) => {
+    // 「关窗→托盘驻留」：非真正退出时，拦截关闭转为隐藏到系统托盘，后台继续驻留/放歌。
+    // 真退出路径（托盘点"退出"/app 退出）：quitting=true，这里放行。
+    if (!quitting && tray) {
+      event.preventDefault();
+      win.hide();
+      // v28.5 关窗(→托盘驻留)=自动暂停视频：通知渲染层暂停（不再是后台继续放歌）。
+      // 重新点开窗口后由用户单击视频恢复播放。
+      try { if (!win.isDestroyed()) win.webContents.send('win-pause-media'); } catch (e) {}
+      return;
+    }
     miniSaveBounds();
     if (normalBounds && !win.isMaximized()) normalBounds = win.getBounds();
   });
-  win.on('moved', miniSaveBounds);
-  win.on('resized', miniSaveBounds);
-  /* 窗口比例锁定：主窗与迷你窗都固定 16:9，拖动改大小时保持比例（无黑边）；最大化/防抖跳过 */
+  win.on('moved', debouncedMiniSaveBounds);
+  win.on('resized', debouncedMiniSaveBounds);
+  /* v29.7 比例锁定 = OS 原生 setAspectRatio（上方）。这里保留 resize 尾沿防抖归正，
+     仅作为兜底（还原 mini / 最大化还原等非拖拽路径残留的非 16:9 尺寸）；
+     拖拽中 setAspectRatio 已实时保证比例，归正差 <2px 时不会动作。 */
+  let ratioTimer = null;
   win.on('resize', () => {
-    if (!win || win.isMaximized()) return;
-    if (ratioLocked) return;          // setBounds 引起的二次 resize 直接跳过，防抖
-    ratioLocked = true;
-    setTimeout(() => { ratioLocked = false; }, 120);
+    if (ratioTimer) clearTimeout(ratioTimer);
+    ratioTimer = setTimeout(() => { ratioTimer = null; snapWindowToRatio(); }, 180);
+  });
+  // 松手归正：以当前宽度为锚，把高度校正到 16:9（宽高差超过 2px 才动，避免抖动）
+  function snapWindowToRatio() {
+    if (!win || win.isDestroyed() || win.isMaximized()) return;
     try {
       const b = win.getBounds();
-      const minH = mini ? 150 : 520;
-      const nh = Math.max(minH, Math.round(b.width / curRatio));
-      const nw = Math.round(nh * curRatio);
-      if (Math.abs(b.height - nh) > 2 || Math.abs(b.width - nw) > 2) {
-        win.setBounds({ x: b.x, y: b.y, width: nw, height: nh });   // 保持比例：改宽则高跟随，改高则按比例回正
+      const minH = mini ? 162 : 522;
+      const targetH = Math.max(minH, Math.round(b.width / curRatio));
+      if (Math.abs(targetH - b.height) >= 2) {
+        win.setBounds({ x: b.x, y: b.y, width: b.width, height: targetH });
       }
     } catch (e) {}
+  }
+
+  win.on('closed', () => {
+    win = null;
+    // 兜底清理所有常驻隐藏窗口（neteaseWin 等 `show:false` 会话窗），
+    // 否则 window-all-closed 永不触发 → 进程残留后台不退出
+    destroyHiddenWindows();
   });
 
-  win.on('closed', () => { win = null; });
+  /* 生产环境（app.isPackaged）禁用 DevTools：任何方式打开都会立即关掉（v28 优化 #3） */
+  if (app.isPackaged) {
+    win.webContents.on('devtools-opened', () => { try { win.webContents.closeDevTools(); } catch (e) {} });
+  }
 }
 
 // 本地文件协议：local://file/<base64url 绝对路径>
@@ -187,6 +234,7 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  ensureTray();   // 右下角系统托盘（主窗 ✕ → 隐藏驻留；托盘右键「退出」才真退出）
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -194,8 +242,12 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  vaultFlush();                     // 退出前落盘：vaultSave 节流后未提交的数据在此同步写出
   if (process.platform !== 'darwin') app.exit(0);   // 强制退出：不残留后台进程（否则单实例锁导致下次打不开）
 });
+
+// 系统关机/注销等真实退出：放行 close 拦截（quitting=true），避免驻留逻辑卡住系统退出
+app.on('before-quit', () => { quitting = true; });
 
 // 单实例
 const gotLock = app.requestSingleInstanceLock();
@@ -256,6 +308,13 @@ function miniSaveBounds() {
     }
   } catch (e) {}
 }
+/* moved / resized 在用户拖动窗口时一秒触发几十次，每次都同步落盘会引起卡顿。
+   改为尾沿 250ms 防抖，落盘真正执行 miniSaveBounds()。 */
+let miniSaveTimer = null;
+function debouncedMiniSaveBounds() {
+  if (miniSaveTimer) clearTimeout(miniSaveTimer);
+  miniSaveTimer = setTimeout(() => { miniSaveTimer = null; miniSaveBounds(); }, 250);
+}
 function clampMiniBounds(b) {
   try {
     const { screen } = require('electron');
@@ -268,6 +327,8 @@ function clampMiniBounds(b) {
 ipcMain.handle('set-mini', (_e, on) => {
   if (!win) return;
   mini = !!on;
+  // mini 悬浮时隐藏托盘图标（用户诉求：右下角图标仅主窗模式驻留时出现）
+  if (mini) destroyTray(); else ensureTray();
   if (mini) {
     if (!win.isMaximized()) normalBounds = win.getBounds();
     let b = miniBounds;
@@ -276,14 +337,12 @@ ipcMain.handle('set-mini', (_e, on) => {
       const wa = screen.getPrimaryDisplay().workArea;
       b = { x: wa.x + wa.width - 480 - 18, y: wa.y + 18, width: 480, height: 270 };   // 迷你窗也 16:9
     }
-    win.setMinimumSize(280, 158);
-    win.setResizable(true);
+    win.setMinimumSize(288, 162);   // 288×162 严格 16:9（288÷16×9=162），与 setAspectRatio 兼容
     win.setBounds(clampMiniBounds(Object.assign({}, b)));
     win.setAlwaysOnTop(true, 'floating');
   } else {
     if (normalBounds) win.setBounds(normalBounds);
-    win.setMinimumSize(920, 520);
-    win.setResizable(true);
+    win.setMinimumSize(928, 522);   // 928×522 严格 16:9，与 setAspectRatio 兼容（v28.4b「锁死」真因见 createWindow 注释）
     win.setAlwaysOnTop(pinned, 'floating');
   }
 });
@@ -404,11 +463,13 @@ async function biliView(bvid) {
     author: (d.data.owner && d.data.owner.name) || ''
   };
 }
-async function biliSearch(keyword) {
+async function biliSearch(keyword, page) {
+  const pn = Math.max(1, Number(page) || 1);
+  // search/type 允许 ps 最高 50；每次拉一页，取足量结果用于曲库扩充
   const d = await biliApi('https://api.bilibili.com/x/web-interface/search/type',
-                          { search_type: 'video', keyword });
+                          { search_type: 'video', keyword, ps: 50, pn });
   if (!d || d.code !== 0) return { ok: false, msg: '搜索失败：' + ((d && d.message) || '请稍后再试或先登录') };
-  const list = ((d.data && d.data.result) || []).slice(0, 12).map((it) => ({
+  const list = ((d.data && d.data.result) || []).map((it) => ({
     bvid: it.bvid || '',
     title: (it.title || '').replace(/<[^>]+>/g, ''),
     duration: it.duration || '',
@@ -427,12 +488,18 @@ async function biliLogin() {
   if (!win) return { ok: false, msg: '主窗口未就绪' };
   const ses = session.fromPartition('persist:bilibili');
   await ses.clearStorageData({ storages: ['cookies'] });
+  // v29.8 登录页乱码根因：老版本（h5 移动页时代）在分区会话里留下的**过期 CSS 缓存**——
+  // 每次点登录只清了 Cookie，样式文件命中坏缓存 → 页面裸奔成"乱码代码"、二维码掉到页底。
+  // 连 HTTP 缓存一起清 + 会话级桌面 UA/中文语言头（与实测正常的探针配置完全一致）。
+  try { await ses.clearCache(); } catch (e) {}
+  try { ses.setUserAgent(BILI_UA, 'zh-CN,zh;q=0.9'); } catch (e) {}
   const win2 = new BrowserWindow({
-    width: 860, height: 620, title: '登录B站 - KisstrTV',
-    parent: win, modal: true, show: false, autoHideMenuBar: true,
-    webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false }
+    width: 1000, height: 720, title: '登录B站 - KisstrTV',
+    parent: win, modal: false, show: false, autoHideMenuBar: true, center: true,
+    backgroundColor: '#ffffff',
+    webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, spellcheck: false }
   });
-  win2.loadURL('https://passport.bilibili.com/h5-app/passport/login?navhide=1');
+  win2.loadURL('https://passport.bilibili.com/login', { userAgent: BILI_UA });
   win2.once('ready-to-show', () => { if (!win2.isDestroyed()) win2.show(); });
   // 兜底：页面加载慢/卡住时也强制显示登录窗口，避免"点了没反应"
   setTimeout(() => { if (!win2.isDestroyed()) win2.show(); }, 2500);
@@ -514,11 +581,25 @@ ipcMain.handle('win-drag', (_e, act, sx, sy) => {
     return true;
   } catch (e) { return false; }
 });
+/* 无边框窗边缘缩放：渲染层热区拖拽 → 主进程 setBounds（OS 原生缩放仍可用于四角，这里补四边 + 光标） */
+ipcMain.on('win-bounds', (e) => {
+  try { e.returnValue = win && !win.isDestroyed() ? win.getBounds() : null; }
+  catch (err) { e.returnValue = null; }
+});
+ipcMain.on('win-set-bounds', (_e, b) => {
+  try {
+    if (!win || win.isDestroyed() || !b) return;
+    win.setBounds({
+      x: Math.round(b.x), y: Math.round(b.y),
+      width: Math.round(b.width), height: Math.round(b.height)
+    });
+  } catch (err) {}
+});
 ipcMain.handle('bili-status', () => biliStatus());
 ipcMain.handle('bili-login', () => biliLogin());
 ipcMain.handle('bili-logout', () => biliLogout());
 ipcMain.handle('bili-resolve', (_e, bvid) => biliResolve(String(bvid || '')));
-ipcMain.handle('bili-search', (_e, kw) => biliSearch(String(kw || '')));
+ipcMain.handle('bili-search', (_e, kw, page) => biliSearch(String(kw || ''), Number(page) || 1));
 ipcMain.handle('bili-pages', (_e, bvid) => biliPages(String(bvid || '')));
 ipcMain.handle('bili-view', (_e, bvid) => biliView(String(bvid || '')));
 ipcMain.handle('bili-resolve-cid', (_e, bvid, cid, part) => biliResolveCid(String(bvid || ''), Number(cid) || 0, String(part || '')));
@@ -549,7 +630,25 @@ function vaultLoad() {
     else vault = { items: [] };
   } catch (e) { vault = { items: [] }; }
 }
+/* 节流版：vaultAdd 高峰期一秒内可能触发数十次，合并成 1 次同步写盘；
+   退出前调用 vaultFlush() 强制立即落盘，避免数据丢失 */
+let vaultDirty = false;
+let vaultSaveTimer = null;
+const VAULT_SAVE_DELAY = 1000;
 function vaultSave() {
+  vaultDirty = true;
+  if (vaultSaveTimer) return;       // 已有待写 timer，复用
+  vaultSaveTimer = setTimeout(() => {
+    vaultSaveTimer = null;
+    if (!vaultDirty) return;
+    vaultDirty = false;
+    try { fs.writeFileSync(VAULT_FILE, JSON.stringify(vault)); } catch (e) {}
+  }, VAULT_SAVE_DELAY);
+}
+function vaultFlush() {              // 同步落盘：取消待写 timer，立即写一次
+  if (vaultSaveTimer) { clearTimeout(vaultSaveTimer); vaultSaveTimer = null; }
+  if (!vaultDirty) return;
+  vaultDirty = false;
   try { fs.writeFileSync(VAULT_FILE, JSON.stringify(vault)); } catch (e) {}
 }
 function vaultAdd(list, theme, src) {
@@ -650,6 +749,54 @@ const NETEASE_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 let neteaseWin = null;        // 登录后隐藏复用为 API 会话页
 let neteaseLoggedIn = false;
 
+// 统一销毁所有常驻隐藏窗口（`show:false` 的会话页），真正退出时调用，避免残留句柄
+function destroyHiddenWindows() {
+  for (const w of [neteaseWin]) {
+    if (w && !w.isDestroyed()) { try { w.destroy(); } catch (e) {} }
+  }
+  if (neteaseWin && neteaseWin.isDestroyed()) neteaseWin = null;
+}
+
+/* ---------- 系统托盘（右下角进程图标） ---------- */
+// 语义：点主窗 ✕ / Alt+F4 = 隐藏到托盘驻留（后台继续放歌）；真退出只能从托盘右键「退出」。
+// 托盘图标常驻（mini 悬浮同样显示），保证任何时刻都有退出入口。
+function trayIconPath() {
+  return path.join(__dirname, 'assets', isWin ? 'icon.ico' : 'icon.png');
+}
+function ensureTray() {
+  if (tray) return tray;
+  try {
+    let img;
+    try { img = nativeImage.createFromPath(trayIconPath()); } catch (e) { img = nativeImage.createEmpty(); }
+    if (img.isEmpty()) { try { img = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon-32.png')); } catch (e) {} }
+    tray = new Tray(img);
+    tray.setToolTip('KisstrTV — 右键退出');
+    rebuildTrayMenu();
+    tray.on('click', () => { if (win) { if (!win.isVisible()) win.show(); if (win.isMinimized()) win.restore(); win.focus(); } });
+    return tray;
+  } catch (e) { console.error('TRAY_ERR', e && e.message); return null; }
+}
+function rebuildTrayMenu() {
+  if (!tray) return;
+  const menu = Menu.buildFromTemplate([
+    { label: '显示 KisstrTV', click: () => { if (win) { if (!win.isVisible()) win.show(); if (win.isMinimized()) win.restore(); win.focus(); } } },
+    { type: 'separator' },
+    { label: '退出', click: () => doQuit() }
+  ]);
+  tray.setContextMenu(menu);
+}
+function destroyTray() {
+  if (tray) { try { tray.destroy(); } catch (e) {} tray = null; }
+}
+// 真正退出：置 quitting → 强杀，绕过 window-all-closed 对隐藏窗的依赖
+function doQuit() {
+  quitting = true;
+  try { destroyTray(); } catch (e) {}
+  try { if (win && !win.isDestroyed()) win.destroy(); } catch (e) {}
+  destroyHiddenWindows();
+  app.exit(0);
+}
+
 function neteaseSession() { return session.fromPartition(NETEASE_SESSION_PARTITION); }
 
 async function neteaseHasLoginCookie() {
@@ -671,21 +818,37 @@ async function neteaseEnsurePage() {
   return neteaseWin;
 }
 
+let neteaseUser = null;   // {name, face} 登录后在曲库页可见，用于确认账号真的生效
+async function neteaseFetchProfile(){
+  try{
+    const r = await neteasePageFetch('/api/nuser/account/get', { credentials:'include' });
+    const j = r && r.json;
+    const p = j && j.profile;
+    if (p) return { name: p.nickname || '', face: p.avatarUrl || (p.avatarDetail && p.avatarDetail.url) || '' };
+  }catch(e){}
+  return null;
+}
 async function neteaseStatus() {
   neteaseLoggedIn = await neteaseHasLoginCookie();
-  return { loggedIn: neteaseLoggedIn };
+  if (!neteaseLoggedIn) { neteaseUser = null; return { loggedIn: false }; }
+  if (!neteaseUser) neteaseUser = await neteaseFetchProfile();
+  return { loggedIn: true, name: (neteaseUser && neteaseUser.name) || '', face: (neteaseUser && neteaseUser.face) || '' };
 }
 
 // 登录：打开可见窗口让用户登录，成功后该会话复用给 API 页
 async function neteaseLogin() {
-  if (await neteaseHasLoginCookie()) { neteaseLoggedIn = true; neteaseEnsurePage(); return { ok: true, already: true }; }
+  if (await neteaseHasLoginCookie()) { neteaseLoggedIn = true; neteaseUser = null; neteaseEnsurePage(); return { ok: true, already: true }; }
   const ses = neteaseSession();
+  // v29.8 与 B站登录同款修复：清缓存 + 会话级桌面 UA/中文语言头（防旧缓存导致页面裸奔乱码）
+  try { await ses.clearCache(); } catch (e) {}
+  try { ses.setUserAgent(NETEASE_UA, 'zh-CN,zh;q=0.9'); } catch (e) {}
   const win2 = new BrowserWindow({
     width: 960, height: 720, title: '登录网易云音乐 - KisstrTV',
-    parent: win, modal: true, show: false, autoHideMenuBar: true,
-    webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true }
+    parent: win, modal: false, show: false, autoHideMenuBar: true, center: true,
+    backgroundColor: '#ffffff',
+    webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false }
   });
-  win2.loadURL('https://music.163.com/#/login');
+  win2.loadURL('https://music.163.com/#/login', { userAgent: NETEASE_UA });
   win2.once('ready-to-show', () => { if (!win2.isDestroyed()) win2.show(); });
   setTimeout(() => { if (!win2.isDestroyed()) win2.show(); }, 2500);
   win2.webContents.on('did-fail-load', (_e, code, desc) => { console.log('NETEASE_LOGIN_LOAD_FAIL', code, String(desc).slice(0, 80)); });
@@ -696,7 +859,7 @@ async function neteaseLogin() {
       done = true;
       clearInterval(timer);
       if (!win2.isDestroyed()) win2.destroy();
-      if (ok) { neteaseLoggedIn = true; neteaseEnsurePage(); resolve({ ok: true }); }
+      if (ok) { neteaseLoggedIn = true; neteaseUser = null; neteaseEnsurePage(); resolve({ ok: true }); }
       else resolve({ ok: false, msg: msg || '未完成登录' });
     };
     const timer = setInterval(async () => {
@@ -707,6 +870,7 @@ async function neteaseLogin() {
 }
 
 async function neteaseLogout() {
+  neteaseUser = null;
   try { await neteaseSession().clearStorageData({ storages: ['cookies'] }); } catch (e) {}
   neteaseLoggedIn = false;
   if (neteaseWin && !neteaseWin.isDestroyed()) { neteaseWin.destroy(); neteaseWin = null; }

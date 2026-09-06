@@ -1,7 +1,7 @@
 {
   "name": "kisstr-tv",
   "productName": "KisstrTV",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "随机播放音乐 MV",
   "main": "main.js",
   "author": "KisstrTV",
@@ -20,7 +20,7 @@
     "appId": "com.kisstr.tv",
     "productName": "KisstrTV",
     "directories": {
-      "output": "release"
+      "output": "release-v33"
     },
     "files": [
       "index.html",
@@ -30,22 +30,20 @@
     ],
     "win": {
       "target": [
-        { "target": "portable", "arch": ["x64"] }
+        { "target": "nsis", "arch": ["x64"] }
       ],
       "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "KisstrTV"
-    },
-    "msi": {
-      "oneClick": true,
       "perMachine": false,
-      "shortcutName": "KisstrTV"
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "KisstrTV",
+      "artifactName": "KisstrTV-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "KisstrTV-便携版-${version}.${ext}"
+      "artifactName": "KisstrTV-Portable-${version}.${ext}"
     }
   }
 }
