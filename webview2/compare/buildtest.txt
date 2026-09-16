@@ -1,0 +1,19 @@
+borrowed 3 dll(s)
+running: C:\Users\biaoj\Desktop\KisstrTV-WV2\05-opensource\build\build.bat
+rc=0
+--- stdout ---
+[vault] stub - the MV library starts empty
+Compiling...
+main.cs(1002,34): warning CS0168: �����˱�����ex��������δʹ�ù�
+[OK] Built: ..\dist\KisstrTV.exe
+
+
+EXE OK: 3187200 bytes
+cleaned dll: True
+cleaned dist: True
+
+--- 清理后 build/ 目录 ---
+   build.bat
+   core.cs
+   main.cs
+   services.cs

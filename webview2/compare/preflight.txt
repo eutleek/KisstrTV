@@ -1,0 +1,58 @@
+=== 1. 目录树 ===
+  (root)                        7.5 KB  5 files
+       .gitattributes                                 0.2 KB
+       .gitignore                                     0.2 KB
+       LICENSE                                        1.0 KB
+       README.md                                      3.1 KB
+       README.zh-CN.md                                3.0 KB
+  build                        99.8 KB  4 files
+       build.bat                                      3.4 KB
+       core.cs                                       18.4 KB
+       main.cs                                       44.8 KB
+       services.cs                                   33.3 KB
+  src                         743.1 KB  1 files
+       index.html                                   743.1 KB
+  src\assets                 1049.6 KB  3 files
+       icon-128.png                                  28.2 KB
+       icon.ico                                     364.1 KB
+       icon.png                                     657.3 KB
+  TOTAL: 1.86 MB
+
+=== 2. 敏感文件扫描（必须全为 0） ===
+  vault.impl.cs (私有曲库)       CLEAN
+  *.dll (WebView2)           CLEAN
+  *.exe (构建产物)               CLEAN
+  dist/ 目录                   CLEAN
+
+=== 3. 源码一致性（与工程真源比对） ===
+  index.html       SAME  63ec6ab29f39b248
+  icon-128.png     SAME  dec593be538429f2
+  icon.png         SAME  5546fef6ea830801
+  icon.ico         SAME  e6f3bf1273eaf80e
+  main.cs          SAME  b2651c11c77671ea
+  core.cs          SAME  4f1e7ef3105af561
+  services.cs      SAME  d0b75f63c374a49a
+  ALL IDENTICAL: True
+
+=== 4. 必需文件 ===
+  README.md              OK
+  README.zh-CN.md        OK
+  LICENSE                OK
+  .gitignore             OK
+  .gitattributes         OK
+  build/build.bat        OK
+  src/index.html         OK
+
+=== 5. build.bat 行尾（cmd 要求 CRLF） ===
+  05-opensource\build\build.bat  CRLF=93  bareLF=0  BOM=False
+  03-build\build.bat             CRLF=116  bareLF=0  BOM=False
+
+=== 6. git 状态 ===
+  已 git init: False
+  当前 git 配置 autocrlf: 见下
+
+=== 7. main.cs 里是否残留私有引用 ===
+  vault.impl       in main.cs: False
+  KISSTR_VAULT     in main.cs: False
+  services.cs 含 KISSTR_VAULT 条件编译: True
+  services.cs 含占位 Vault stub: True

@@ -1,0 +1,24 @@
+=== sync shared sources -> 05-opensource ===
+  main.cs        cc7b3f10d64d78dd -> unchanged
+  core.cs        2bf63bcf7f480157 -> unchanged
+  services.cs    e625206ebb284e68 -> UPDATED
+  index.html     5c7d424cd88d2cbf
+  (vault.impl.cs NOT copied)  leaked=False
+
+=== full build (03-build) ===
+  rc=0
+  [vault] private implementation - full build
+  [OK] Built: ..\01-dist\KisstrTV.exe
+  -> KisstrTV.exe  3198976 bytes
+
+=== opensource build (05-opensource/build) ===
+  borrowed DLLs: Microsoft.Web.WebView2.Core.dll, Microsoft.Web.WebView2.WinForms.dll, WebView2Loader.dll
+  rc=0
+  [vault] stub - the MV library starts empty
+  [OK] Built: ..\dist\KisstrTV.exe
+  -> KisstrTV.exe  3190272 bytes
+  cleaned borrowed DLLs: True
+
+=== byte check: new markers compiled in? ===
+  full  1/3  ['MaxJsonLength']
+  os    0/3  []

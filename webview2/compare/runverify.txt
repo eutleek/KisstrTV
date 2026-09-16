@@ -1,0 +1,27 @@
+debug.on created
+old log removed
+launching exe ...
+after 25s: alive=True  pid=20544
+
+=== debug.log: VAULT / error lines ===
+log size: 5163 bytes, 55 lines
+  16:41:14.216  CALL vaultStats  {"__k":3,"m":"vaultStats","a":[]}
+  16:41:14.284  VAULT loaded 6044 items, 861831 chars
+  16:41:14.326  RET  vaultStats -> {"total":6044}
+  (3 matching lines)
+
+--- first 12 lines ---
+  === KisstrTV diag 2026-09-16T16:41:12 ===
+  16:41:12.717  start; tmp=C:\Users\biaoj\AppData\Local\Temp\KisstrTV\biaoj ; exe=C:\Users\biaoj\Desktop\KisstrTV-WV2\01-dist
+  16:41:13.760  html: inject at 42 , compat-mode-safe=True
+  16:41:13.800  REQ  (no patch)        file:///C:/Users/biaoj/AppData/Local/Temp/KisstrTV/biaoj/index.run.html
+  16:41:13.815  RESP 200  file:///C:/Users/biaoj/AppData/Local/Temp/KisstrTV/biaoj/index.run.html
+  16:41:13.876  REQ  (no patch)        file:///C:/Users/biaoj/AppData/Local/Temp/KisstrTV/biaoj/assets/icon.png
+  16:41:13.877  REQ  (no patch)        file:///C:/Users/biaoj/AppData/Local/Temp/KisstrTV/biaoj/assets/icon-128.png
+  16:41:13.928  RESP 200  file:///C:/Users/biaoj/AppData/Local/Temp/KisstrTV/biaoj/assets/icon.png
+  16:41:13.929  RESP 200  file:///C:/Users/biaoj/AppData/Local/Temp/KisstrTV/biaoj/assets/icon-128.png
+  16:41:14.205  CALL biliStatus  {"__k":1,"m":"biliStatus","a":[]}
+  16:41:14.214  REQ  +referer bili     http://i1.hdslb.com/bfs/archive/6770f3a7d60f21469194251726588cee3b8bdb45.jpg
+  16:41:14.214  CALL neteaseStatus  {"__k":2,"m":"neteaseStatus","a":[]}
+
+debug.on removed
